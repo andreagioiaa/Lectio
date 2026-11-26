@@ -33,7 +33,17 @@ from typing import Any, Callable
 
 from ...paths import app_data_dir
 from .document import Block, PdfDocument, Slide, parse_markdown
-from .layout import BULLET_GLYPHS, Line, PageLines, analyze_page, body_font_size, normalize_text, strip_repeated_margins
+from .images import image_folder, image_name, images_root
+from .layout import (
+    BULLET_GLYPHS,
+    Line,
+    PageLines,
+    _bullet_split,
+    analyze_page,
+    body_font_size,
+    normalize_text,
+    strip_repeated_margins,
+)
 from .mathlayout import GLUE_RE, Atom, atom_from_span, atoms_to_latex, classify, dominant_baseline, is_math_atom
 from .mathconv import (
     escape_dollars,
@@ -85,6 +95,7 @@ class ExtractOptions:
     remove_page_numbers: bool = True
     dehyphenate: bool = True
     detect_math: bool = True
+    extract_images: bool = True
     marker_command: str = ""
     nougat_command: str = ""
 
@@ -280,6 +291,68 @@ def _split_trailing_token(atom: Atom) -> Atom | None:
     return base
 
 
+# Marcatori interni del colore (caratteri di controllo che non compaiono nel testo estratto):
+# ``\x01nome\x02testo\x03`` diventa ``\textcolor{nome}{testo}`` alla fine della riga.
+_COLOR_OPEN, _COLOR_SEP, _COLOR_CLOSE = "\x01", "\x02", "\x03"
+_COLOR_RUN_RE = re.compile(r"\x01([a-z]+)\x02([^\x01\x03]*)\x03(\s*)\x01\1\x02")
+_COLOR_STRUCTURE_RE = re.compile(r"(?:[^\x01\x02\x03]|\x01[a-z]+\x02[^\x01\x02\x03]*\x03)*")
+_TEXTCOLOR_RUN_RE = re.compile(r"\\textcolor\{([a-z]+)\}\{([^{}]*)\}(\s+)\\textcolor\{\1\}\{")
+
+
+def text_color_name(rgb: int) -> str:
+    """Colore RGB di uno span -> nome xcolor; ``""`` per nero, bianco, grigi e colori scuri.
+
+    Il bianco e' il testo sulle barre colorate dei titoli: non e' un'evidenziazione.
+    """
+    red, green, blue = ((rgb >> 16) & 255) / 255, ((rgb >> 8) & 255) / 255, (rgb & 255) / 255
+    high, low = max(red, green, blue), min(red, green, blue)
+    if high < 0.35 or high - low < 0.3:
+        return ""
+    delta = high - low
+    if high == red:
+        hue = (60 * ((green - blue) / delta)) % 360
+    elif high == green:
+        hue = 60 * ((blue - red) / delta) + 120
+    else:
+        hue = 60 * ((red - green) / delta) + 240
+    for limit, name in ((15, "red"), (45, "orange"), (70, "olive"), (160, "green"), (205, "cyan"),
+                        (255, "blue"), (290, "violet"), (335, "magenta")):
+        if hue < limit:
+            return name
+    return "red"
+
+
+def _colored_text(atom: Atom) -> str:
+    """Testo dell'atomo, con i marcatori di colore se e' colorato (spazi esterni fuori)."""
+    core = atom.text.strip()
+    name = text_color_name(atom.color) if core and core not in BULLET_GLYPHS else ""
+    if not name:
+        return atom.text
+    start = atom.text.index(core[0])
+    return f"{atom.text[:start]}{_COLOR_OPEN}{name}{_COLOR_SEP}{core}{_COLOR_CLOSE}{atom.text[start + len(core):]}"
+
+
+def apply_color_marks(text: str) -> str:
+    """Marcatori interni -> ``\\textcolor``; unisce i tratti vicini dello stesso colore."""
+    if _COLOR_OPEN not in text and _COLOR_CLOSE not in text:
+        return text
+    previous = None
+    while previous != text:
+        previous, text = text, _COLOR_RUN_RE.sub("\x01\\1\x02\\2\\3", text)
+    if not _COLOR_STRUCTURE_RE.fullmatch(text):  # marcatori spezzati: meglio perdere il colore
+        return re.sub(r"\x01[a-z]*\x02?|[\x02\x03]", "", text)
+    text = re.sub(r"\x01([a-z]+)\x02", r"\\textcolor{\1}{", text)
+    return text.replace(_COLOR_CLOSE, "}")
+
+
+def merge_color_runs(text: str) -> str:
+    """``\\textcolor{blue}{a} \\textcolor{blue}{b}`` -> ``\\textcolor{blue}{a b}`` (righe unite)."""
+    previous = None
+    while previous != text:
+        previous, text = text, _TEXTCOLOR_RUN_RE.sub(r"\\textcolor{\1}{\2\3", text)
+    return text
+
+
 def line_atoms_to_pieces(atoms: list[Atom], detect_math: bool) -> list[list[Any]]:
     """Glifi di una riga -> segmenti ``[is_math, contenuto]``.
 
@@ -294,7 +367,7 @@ def line_atoms_to_pieces(atoms: list[Atom], detect_math: bool) -> list[list[Any]
     if not atoms:
         return []
     if not detect_math:
-        return [[False, "".join(atom.text for atom in atoms)]]
+        return [[False, "".join(_colored_text(atom) for atom in atoms)]]
     base_y, base_size = dominant_baseline(atoms)
     classify(atoms, base_y, base_size)
     for atom in atoms:
@@ -346,13 +419,14 @@ def line_atoms_to_pieces(atoms: list[Atom], detect_math: bool) -> list[list[Any]
             run.append(atom)
             continue
         flush_run()
+        text = _colored_text(atom)
         if pieces and not pieces[-1][0]:
-            pieces[-1][1] += atom.text
+            pieces[-1][1] += text
         else:
             if pieces and pieces[-1][0] and atom.text[:1].isspace() is False and atom.text[:1].isalnum():
-                pieces.append([False, " " + atom.text])
+                pieces.append([False, " " + text])
             else:
-                pieces.append([False, atom.text])
+                pieces.append([False, text])
     flush_run()
     return _absorb_operands(_balance_parentheses(pieces))
 
@@ -446,7 +520,7 @@ def pieces_to_markdown(pieces: list[list[Any]], detect_math: bool) -> tuple[str,
         math_chars += math_char_count(core)
         converted = wrap_unicode_math(core) if detect_math else escape_dollars(core)
         parts.append(f"{leading}{converted}{trailing}")
-    text = re.sub(r"[ ]{2,}", " ", "".join(parts)).strip()
+    text = re.sub(r"[ ]{2,}", " ", apply_color_marks("".join(parts))).strip()
     display = False
     if detect_math:
         math_only = [p for p in pieces if p[0] and p[1].strip()]
@@ -559,6 +633,123 @@ def _build_lines(result: PageLines, raw_lines: list, detect_math: bool) -> None:
 
 
 RawLine = tuple[int, tuple[float, float, float, float], list[Atom]]
+Rect = tuple[float, float, float, float]
+
+# Immagini: sotto questa misura (punti) sono icone o punti elenco, non contenuto.
+MIN_IMAGE_SIDE = 40.0
+BULLET_IMAGE_SIDE = 12.0
+IMAGE_DPI = 150
+
+
+def page_image_boxes(page: Any) -> list[tuple[Rect, bytes]]:
+    """Riquadri delle immagini disegnate nella pagina con l'impronta del contenuto."""
+    try:
+        infos = page.get_image_info(hashes=True)
+    except Exception:  # pragma: no cover - versioni vecchie di PyMuPDF
+        return []
+    boxes: list[tuple[Rect, bytes]] = []
+    for info in infos:
+        x0, y0, x1, y1 = (float(value) for value in info.get("bbox", (0, 0, 0, 0)))
+        if x1 > x0 and y1 > y0:
+            boxes.append(((x0, y0, x1, y1), bytes(info.get("digest") or b"")))
+    return boxes
+
+
+def apply_image_bullets(page: PageLines, boxes: list[tuple[Rect, bytes]]) -> None:
+    """Le slide LaTeX/Beamer disegnano i punti elenco come piccole immagini: diventano ``•``."""
+    for (x0, y0, x1, y1), _digest in boxes:
+        width, height = x1 - x0, y1 - y0
+        if width > BULLET_IMAGE_SIDE or height > BULLET_IMAGE_SIDE or not 0.6 <= width / height <= 1.7:
+            continue
+        middle = (y0 + y1) / 2
+        for line in page.lines:
+            if line.image or not line.y0 - 1 <= middle <= line.y1 + 1 or not 0 <= line.x0 - x1 <= 15:
+                continue
+            if _bullet_split(line.text)[0] is None:
+                line.text = f"• {line.text.strip()}"
+            line.x0 = min(line.x0, x0)
+            break
+
+
+def content_image_rects(page: PageLines, boxes: list[tuple[Rect, bytes]], repeated: set[bytes]) -> list[list[float]]:
+    """Immagini di contenuto: niente icone, barre del tema, sfondi o loghi ripetuti.
+
+    Le immagini che si sovrappongono (un disegno fatto a pezzi) diventano un unico riquadro.
+    """
+    page_area = max(1.0, page.width * page.height)
+    rects: list[list[float]] = []
+    for (x0, y0, x1, y1), digest in boxes:
+        width, height = x1 - x0, y1 - y0
+        if min(width, height) < MIN_IMAGE_SIDE or max(width, height) / min(width, height) > 8:
+            continue
+        if width * height >= page_area * 0.85 or (digest and digest in repeated):
+            continue
+        rects.append([x0, y0, x1, y1])
+    merged = True
+    while merged:
+        merged = False
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                    a[:] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                    rects.remove(b)
+                    merged = True
+                    break
+            if merged:
+                break
+    return sorted(rects, key=lambda rect: (rect[1], rect[0]))
+
+
+def insert_image_line(page: PageLines, rect: list[float], name: str, ref: str) -> None:
+    """Mette l'immagine al suo posto nell'ordine di lettura e toglie le etichette disegnate sopra."""
+    def inside(line: Line) -> bool:
+        return rect[0] - 2 <= line.center_x <= rect[2] + 2 and rect[1] - 2 <= (line.y0 + line.y1) / 2 <= rect[3] + 2
+
+    page.lines = [line for line in page.lines if line.image or not inside(line)]
+    image_line = Line(text=name, x0=rect[0], y0=rect[1], x1=rect[2], y1=rect[3], size=0.0, raw=name, image=ref)
+    position = next((index for index, line in enumerate(page.lines) if line.y0 > rect[1]), len(page.lines))
+    page.lines.insert(position, image_line)
+
+
+def extract_images(
+    source: Any,
+    pages: list[PageLines],
+    boxes: list[list[tuple[Rect, bytes]]],
+    source_path: Path,
+    warnings: list[str],
+) -> int:
+    """Salva le immagini di contenuto come ``<capitolo>_immN.png`` e le inserisce nelle pagine."""
+    threshold = max(3, (len(pages) + 1) // 2)
+    pages_with: dict[bytes, set[int]] = {}
+    for index, page_boxes in enumerate(boxes):
+        for _rect, digest in page_boxes:
+            if digest:
+                pages_with.setdefault(digest, set()).add(index)
+    repeated = {digest for digest, found in pages_with.items() if len(found) >= threshold}
+    folder_name = image_folder(source_path)
+    folder = images_root() / folder_name
+    prefix = image_name(source_path, 0)[:-1]
+    if folder.is_dir():  # nuova estrazione dello stesso PDF: via le immagini vecchie
+        for old in folder.glob(f"{prefix}*.png"):
+            old.unlink(missing_ok=True)
+    count = 0
+    for index, page in enumerate(pages):
+        if page.engine != "pymupdf":
+            continue  # pagina scansionata: l'immagine e' la pagina stessa
+        for rect in content_image_rects(page, boxes[index], repeated):
+            name = image_name(source_path, count + 1)
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                pixmap = source.load_page(index).get_pixmap(clip=rect, dpi=IMAGE_DPI)
+                pixmap.save(str(folder / f"{name}.png"))
+            except Exception as exc:
+                LOGGER.warning("Immagine a pagina %s non salvata: %s", index + 1, exc)
+                if not any(item.startswith("Alcune immagini") for item in warnings):
+                    warnings.append("Alcune immagini non sono state salvate.")
+                continue
+            count += 1
+            insert_image_line(page, rect, name, f"{folder_name}/{name}.png")
+    return count
 
 
 def _visible_chars(atoms: list[Atom]) -> int:
@@ -1172,6 +1363,7 @@ def convert_pdf(
     extraction_share = 0.75 if wants_math_engine else 1.0
     ocr_ok = ocr_available(options)
     ocr_warned = False
+    image_boxes: list[list[tuple[Rect, bytes]]] = []
 
     if use_plumber:
         import pdfplumber  # type: ignore[import-not-found]
@@ -1219,6 +1411,9 @@ def convert_pdf(
                 report(index / max(1, total) * extraction_share, f"Pagina {index + 1} di {total}")
                 page = source.load_page(index)
                 lines = _pymupdf_page(page, index + 1, options.detect_math)
+                boxes = page_image_boxes(page)
+                apply_image_bullets(lines, boxes)
+                image_boxes.append(boxes)
                 if _needs_ocr(lines, options):
                     if ocr_ok:
                         with tempfile.TemporaryDirectory(prefix="lectio-ocr-") as temp:
@@ -1230,6 +1425,11 @@ def convert_pdf(
                         warnings.append("Alcune pagine sembrano scansionate ma nessun motore OCR e' disponibile.")
                         ocr_warned = True
                 pages.append(lines)
+
+            if options.extract_images:
+                saved = extract_images(source, pages, image_boxes, source_path, warnings)
+                if saved:
+                    LOGGER.info("Estratte %s immagini da %s.", saved, source_path.name)
 
             if wants_math_engine:
                 if not math_engine_available(options.math_engine, options):
@@ -1284,6 +1484,8 @@ def convert_pdf(
             engine = options.math_engine
         else:
             blocks = analyze_page(page, dehyphenate=options.dehyphenate)
+            for block in blocks:
+                block.text = merge_color_runs(block.text)
             engine = page.engine
         engines[engine] = engines.get(engine, 0) + 1
         slides.append(Slide(number=index + 1, blocks=blocks, engine=engine))

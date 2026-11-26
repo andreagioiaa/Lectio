@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import tkinter as tk
 from contextlib import contextmanager
 from typing import Any, Iterable, Iterator
@@ -10,6 +11,23 @@ import customtkinter as ctk
 
 from ..config import COLORS, FONT_FAMILY, MONO_FONT_FAMILY
 from .theme import font, mono
+
+
+@functools.lru_cache(maxsize=128)
+def glyph_icon(glyph: str, color: str, size: int = 20) -> ctk.CTkImage | None:
+    """Icona a contorno (stile X) disegnata da un glifo di Segoe MDL2 Assets.
+
+    shortcut: usa il font di sistema di Windows 10/11; altrove restituisce None.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        face = ImageFont.truetype("segmdl2.ttf", size * 2)
+    except (ImportError, OSError):
+        return None
+    image = Image.new("RGBA", (size * 2, size * 2), (0, 0, 0, 0))
+    ImageDraw.Draw(image).text((size, size), glyph, font=face, fill=color, anchor="mm")
+    return ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
 
 
 class Card(ctk.CTkFrame):

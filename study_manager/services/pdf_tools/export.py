@@ -45,6 +45,7 @@ from .document import (
     BLOCK_BULLET,
     BLOCK_CODE,
     BLOCK_HEADING,
+    BLOCK_IMAGE,
     BLOCK_LETTER,
     BLOCK_MATH,
     BLOCK_NUMBER,
@@ -59,6 +60,7 @@ from .document import (
     split_inline_math,
     unescape_text,
 )
+from .images import image_markdown, images_root, resolve_image
 from .mathconv import ALL_SYMBOLS, latex_to_unicode
 
 
@@ -381,6 +383,8 @@ def slides_to_latex_body(slides: list[Slide], options: RenderOptions) -> str:
                     lines.append(" & ".join(cells) + r" \\ \hline")
                 lines.append("\\end{tabular}")
                 lines.append("\\end{center}")
+            elif block.kind == BLOCK_IMAGE:
+                lines.extend(image_latex(block.text))
             else:
                 lines.append(inline_to_latex(block.text))
             lines.append("")
@@ -400,6 +404,7 @@ LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \usepackage{amsfonts}
 \usepackage{textcomp}
 \usepackage{xcolor}
+\usepackage{graphicx}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage[hidelinks]{hyperref}
 \setlength{\parindent}{0pt}
@@ -408,6 +413,28 @@ LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 
 
 _REQUIRED_PACKAGES = ("amsmath", "amssymb")
+
+
+_INCLUDEGRAPHICS_RE = re.compile(r"^\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}\s*$")
+IMAGE_LATEX_OPTIONS = r"width=0.8\linewidth,height=0.45\textheight,keepaspectratio"
+
+
+def image_latex(ref: str) -> list[str]:
+    return ["\\begin{center}", f"\\includegraphics[{IMAGE_LATEX_OPTIONS}]{{{ref}}}", "\\end{center}"]
+
+
+def copy_latex_images(latex: str, target_dir: Path) -> int:
+    """Copia accanto al .tex le immagini usate, nelle stesse sottocartelle del riferimento."""
+    copied = 0
+    for ref in re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", latex):
+        source = resolve_image(ref)
+        if source is None or Path(ref).is_absolute() or ".." in Path(ref).parts:
+            continue
+        destination = target_dir / ref
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        copied += 1
+    return copied
 
 
 def _template_uses_package(template: str, package: str) -> bool:
@@ -438,6 +465,8 @@ def apply_template(template: str, body: str, options: RenderOptions) -> str:
         _template_uses_package(text, pkg) for pkg in ("xcolor", "color", "tcolorbox", "tikz", "pgf")
     ):
         missing.append("xcolor")
+    if "\\includegraphics" in body and not _template_uses_package(text, "graphicx"):
+        missing.append("graphicx")
     if missing:
         extra = "".join(f"\\usepackage{{{pkg}}} % aggiunto da Lectio\n" for pkg in missing)
         index = text.find("\\begin{document}")
@@ -668,6 +697,10 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
                 kind[1] += 1
                 out.append(f"{'  ' * depth}{kind[1]}. {_latex_text_to_markdown(item.group(1))}")
             continue
+        graphic = _INCLUDEGRAPHICS_RE.match(line)
+        if graphic:
+            out.extend(["", image_markdown(graphic.group(1).strip()), ""])
+            continue
         section = _SECTION_RE.match(line)
         if section:
             depth = SECTION_LEVELS.index(section.group(1)) - first_heading_index(options) + 1
@@ -731,6 +764,8 @@ def slides_to_txt(slides: list[Slide], options: RenderOptions) -> str:
             elif block.kind == BLOCK_TABLE:
                 for row in _table_rows(block.text):
                     lines.append(" | ".join(_inline_to_plain(cell) for cell in row))
+            elif block.kind == BLOCK_IMAGE:
+                lines.append(f"[Immagine: {Path(block.text).stem}]")
             else:
                 lines.append(_inline_to_plain(block.text))
             previous_list = is_list
@@ -827,6 +862,8 @@ def slides_to_pandoc_markdown(slides: list[Slide], options: RenderOptions) -> st
                         if row_index == 0:
                             out.append("|" + "---|" * columns)
                     out.append("")
+            elif block.kind == BLOCK_IMAGE:
+                out.extend([f"![]({block.text})", ""])
             else:
                 out.extend([_pandoc_inline(block.text), ""])
             previous_list = is_list
@@ -904,7 +941,7 @@ def export_docx(source: str, source_format: str, target: str | Path, options: Re
         args = [command, "-f", reader, "-t", "docx", "-o", str(temp_output), str(input_path)]
         if options.title:
             args[1:1] = ["-M", f"title={options.title}"]
-        args[1:1] = ["-M", "lang=it-IT"]
+        args[1:1] = ["-M", "lang=it-IT", "--resource-path", str(images_root())]
         reference = reference_docx()
         if reference is not None:
             args[1:1] = ["--reference-doc", str(reference)]
@@ -949,7 +986,10 @@ def export_file(source: str, source_format: str, fmt: str, target: str | Path, o
         return export_docx(source, source_format, target_path, options)
     if fmt not in (FORMAT_TXT, FORMAT_TEX):
         raise ExportError(f"Formato non supportato: {fmt}")
-    atomic_write_text(target_path, render_source(source, source_format, fmt, options))
+    text = render_source(source, source_format, fmt, options)
+    atomic_write_text(target_path, text)
+    if fmt == FORMAT_TEX:
+        copy_latex_images(text, target_path.parent)
     return target_path
 
 
@@ -1037,6 +1077,13 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
                     tag = "th" if index == 0 else "td"
                     body.append("<tr>" + "".join(f"<{tag}>{_html_inline(cell)}</{tag}>" for cell in row) + "</tr>")
                 body.append("</table>")
+            elif block.kind == BLOCK_IMAGE:
+                path = resolve_image(block.text)
+                alt = html.escape(Path(block.text).stem)
+                if path is not None:
+                    body.append(f'<figure class="image"><img src="{path.as_uri()}" alt="{alt}"></figure>')
+                else:
+                    body.append(f"<p>[Immagine non trovata: {alt}]</p>")
             else:
                 body.append(f"<p>{_html_inline(block.text)}</p>")
         close()
@@ -1070,6 +1117,8 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
   h1, h2, h3 {{ margin: 8px 0 10px; }}
   h1 {{ font-size: 24px; }} h2 {{ font-size: 19px; color: #CBD5E1; }} h3 {{ font-size: 16px; }}
   .display {{ overflow-x: auto; margin: 10px 0; }}
+  figure.image {{ margin: 12px 0; text-align: center; }}
+  figure.image img {{ max-width: 100%; height: auto; }}
   pre.code {{ background: #0B1120; border: 1px solid #24344F; border-radius: 8px; padding: 10px 14px;
              overflow-x: auto; font-family: Consolas, monospace; font-size: 13px; }}
   table {{ border-collapse: collapse; margin: 10px 0; }}

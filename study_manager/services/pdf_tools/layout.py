@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from .document import (
     BLOCK_BULLET,
     BLOCK_HEADING,
+    BLOCK_IMAGE,
     BLOCK_MATH,
     BLOCK_NUMBER,
     BLOCK_PARAGRAPH,
@@ -57,6 +58,7 @@ class Line:
     raw: str = ""
     display_math: bool = False
     math_chars: int = 0
+    image: str = ""  # riferimento di un'immagine estratta (la riga non e' testo)
 
     def __post_init__(self) -> None:
         if not self.raw:
@@ -139,11 +141,20 @@ def strip_repeated_margins(
                         counts[key] = counts.get(key, 0) + 1
     threshold = max(3, (len(pages) + 1) // 2)
     repeated = {key for key, count in counts.items() if count >= threshold and key != "#"}
+    template = template_lines(pages) if remove_headers else set()
+    # Un titolo di slide ripetuto (slide di continuazione) e' contenuto anche se sta in alto.
+    title_size = body_font_size([line for page in pages for line in page.lines if not line.image]) * 1.15
     for page in pages:
         kept: list[Line] = []
         for line in page.lines:
+            if line.image:
+                kept.append(line)
+                continue
+            if id(line) in template:
+                removed += 1
+                continue
             in_margin = _in_margin(line, page, margin_ratio)
-            if in_margin and remove_headers and margin_key(line.raw) in repeated:
+            if in_margin and remove_headers and margin_key(line.raw) in repeated and line.size < title_size:
                 removed += 1
                 continue
             if remove_page_numbers and _in_margin(line, page, number_ratio) and PAGE_NUMBER_RE.match(line.raw):
@@ -152,6 +163,45 @@ def strip_repeated_margins(
             kept.append(line)
         page.lines = kept
     return removed
+
+
+def template_lines(pages: list[PageLines]) -> set[int]:
+    """``id`` delle righe del template delle slide, ovunque si trovino nella pagina.
+
+    Una riga fa parte del template se compare in almeno meta' delle pagine
+    (minimo 3) nella stessa posizione con lo stesso testo (numeri esclusi),
+    oppure se in quella posizione c'e' sempre una riga piccola (piè di pagina,
+    barra di navigazione con il nome della sezione) anche con testo diverso.
+    Il testo grande come il corpo o piu' (titoli, concetti ripetuti) resta: e' contenuto.
+    Funziona anche con piu' slide per pagina (stampe 2 o 4 per foglio).
+    """
+    if len(pages) < 3:
+        return set()
+    threshold = max(3, (len(pages) + 1) // 2)
+    body = body_font_size([line for page in pages for line in page.lines if not line.image])
+    text_slots: dict[tuple, set[int]] = {}
+    size_slots: dict[tuple, set[int]] = {}
+    keyed: list[tuple[Line, tuple, tuple]] = []
+    for index, page in enumerate(pages):
+        for line in page.lines:
+            if line.image or line.display_math:
+                continue
+            key = margin_key(line.raw)
+            if not key:
+                continue
+            text_slot = (key, round(line.y0 / 6), round(line.x0 / 12))
+            size_slot = (round(line.y0 / 6), round(line.size))
+            text_slots.setdefault(text_slot, set()).add(index)
+            size_slots.setdefault(size_slot, set()).add(index)
+            keyed.append((line, text_slot, size_slot))
+    template: set[int] = set()
+    for line, text_slot, size_slot in keyed:
+        small = line.size <= body * 0.75 and len(line.raw) <= 80
+        if len(text_slots[text_slot]) >= threshold and line.size < body * 0.95:
+            template.add(id(line))
+        elif small and len(size_slots[size_slot]) >= threshold:
+            template.add(id(line))
+    return template
 
 
 def _in_margin(line: Line, page: PageLines, ratio: float) -> bool:
@@ -226,7 +276,7 @@ def analyze_page(page: PageLines, dehyphenate: bool = True) -> list[Block]:
     lines = [line for line in page.lines if line.text.strip()]
     if not lines:
         return []
-    body = body_font_size(lines)
+    body = body_font_size([line for line in lines if not line.image] or lines)
 
     # Righe composte solo dal simbolo del punto elenco: si uniscono alla
     # riga successiva sulla stessa altezza (PowerPoint le esporta separate).
@@ -273,6 +323,11 @@ def analyze_page(page: PageLines, dehyphenate: bool = True) -> list[Block]:
         if line in title_lines:
             continue
         text = line.text.strip()
+        if line.image:
+            flush()
+            blocks.append(Block(BLOCK_IMAGE, line.image))
+            previous = None
+            continue
         if line.display_math:
             flush()
             formula = text.strip("$").strip()
@@ -349,7 +404,7 @@ def _starts_new_paragraph(previous: Line, line: Line) -> bool:
 def _title_lines(lines: list[Line], page: PageLines, body: float) -> list[Line]:
     """Righe del titolo: le prime righe nella parte alta con font piu' grande."""
     top_limit = page.height * 0.35 if page.height else float("inf")
-    candidates = [line for line in lines if line.y0 <= top_limit and not line.display_math]
+    candidates = [line for line in lines if line.y0 <= top_limit and not line.display_math and not line.image]
     if not candidates:
         return []
     largest = max(line.size for line in candidates)

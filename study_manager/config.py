@@ -90,25 +90,28 @@ WEB_LOG_COOLDOWN_SECONDS = 10.0
 
 @dataclass(frozen=True)
 class Palette:
-    bg: str = "#0B1120"
-    sidebar: str = "#0F172A"
-    surface: str = "#111C31"
-    surface_alt: str = "#16233A"
-    surface_hover: str = "#1D2D48"
-    border: str = "#24344F"
-    text: str = "#F1F5F9"
-    text_muted: str = "#94A3B8"
-    text_faint: str = "#64748B"
-    accent: str = "#22D3A7"
-    accent_hover: str = "#16B98F"
-    accent_dark: str = "#0F766E"
+    # Tema scuro in stile X ("Lights out"): nero puro, pannelli grafite con bordo
+    # sottile e accento blu. Ogni valore deve restare unico: il cambio tema
+    # converte i colori per valore (``ui.theme.color_map``).
+    bg: str = "#000000"
+    sidebar: str = "#010101"
+    surface: str = "#16181C"
+    surface_alt: str = "#1D1F23"
+    surface_hover: str = "#25282D"
+    border: str = "#2F3336"
+    text: str = "#E7E9EA"
+    text_muted: str = "#71767B"
+    text_faint: str = "#536471"
+    accent: str = "#1D9BF0"
+    accent_hover: str = "#1A8CD8"
+    accent_dark: str = "#0E4F7C"
     blue: str = "#38BDF8"
-    amber: str = "#FBBF24"
-    red: str = "#F87171"
+    amber: str = "#FFD400"
+    red: str = "#F4212E"
     red_dark: str = "#7F1D1D"
-    green: str = "#4ADE80"
+    green: str = "#00BA7C"
     purple: str = "#A78BFA"
-    chart_grid: str = "#26364F"
+    chart_grid: str = "#202327"
 
 
 # Palette di riferimento dei due temi. ``COLORS`` e' l'istanza usata dalle viste:

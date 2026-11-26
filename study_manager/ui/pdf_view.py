@@ -41,11 +41,13 @@ from ..services.pdf_tools.inline import (
     preview_color,
 )
 from ..services.pdf_tools.draft import default_draft_path, load_draft, save_draft
+from ..services.pdf_tools.images import resolve_image
 from ..services.pdf_tools.draft import delete_draft as delete_draft_file
 from ..services.pdf_tools.document import (
     BLOCK_BULLET,
     BLOCK_CODE,
     BLOCK_HEADING,
+    BLOCK_IMAGE,
     BLOCK_LETTER,
     BLOCK_MATH,
     BLOCK_NUMBER,
@@ -241,6 +243,8 @@ class PdfView(ctk.CTkFrame):
         self._task_done: Callable[[dict[str, Any]], None] | None = None
         self._renderer: MathRenderer | None = None
         self._preview_images: list[tk.PhotoImage] = []
+        # Immagini delle slide gia' ridimensionate: (file, data modifica, larghezza) -> immagine.
+        self._image_cache: dict[tuple[str, float, int], object] = {}
         self._remove_dialog: RemoveTextDialog | None = None
         self._preview_numbering: SectionNumbering | None = None
         self._font_tags: set[str] = set()
@@ -705,9 +709,6 @@ class PdfView(ctk.CTkFrame):
         self.remove_button = self._button(modes, "✂  Rimuovi testo", self.open_remove_dialog)
         self.remove_button.configure(height=28, width=130)
         self.remove_button.grid(row=0, column=2, sticky="w", padx=(10, 0))
-        self.markers_button = self._button(modes, "Togli === SLIDE ===", self.remove_slide_markers)
-        self.markers_button.configure(height=28, width=150)
-        self.markers_button.grid(row=0, column=3, sticky="w", padx=(6, 0))
         chapter = ctk.CTkFrame(modes, fg_color="transparent")
         chapter.grid(row=0, column=4, sticky="w", padx=(14, 0))
         self.link_button = self._button(chapter, "📚  Collega a materia", self.link_current_doc)
@@ -1337,7 +1338,7 @@ class PdfView(ctk.CTkFrame):
         has_any = any(doc.source.strip() for doc in self.docs)
         self.extract_button.configure(state="disabled" if busy else "normal")
         self.cancel_button.configure(state="normal" if busy else "disabled")
-        for button in (self.copy_button, self.katex_button, self.remove_button, self.markers_button,
+        for button in (self.copy_button, self.katex_button, self.remove_button,
                        *self.export_buttons):
             button.configure(state="normal" if has_doc and not busy else "disabled")
         if not katex_available():
@@ -2404,6 +2405,15 @@ class PdfView(ctk.CTkFrame):
                 text.tag_add("display", start, "end-1c")
             else:
                 text.insert("end", f"$$ {block.text} $$\n", ("display", "mathcode"))
+        elif block.kind == BLOCK_IMAGE:
+            image = self._slide_image(block.text)
+            if image is not None:
+                start = text.index("end-1c")
+                text.image_create("end", image=image, align="center", padx=2)
+                text.insert("end", "\n")
+                text.tag_add("display", start, "end-1c")
+            else:
+                text.insert("end", f"[immagine non trovata: {Path(block.text).name}]\n", ("para",))
         elif block.kind == BLOCK_TABLE:
             for row in block.text.splitlines():
                 run_id = self._preview_map.locate(row, verbatim=True) if self._preview_map is not None else None
@@ -2428,6 +2438,32 @@ class PdfView(ctk.CTkFrame):
         else:
             self._insert_inline(block.text, ("para",))
             text.insert("end", "\n", "para")
+
+    def _slide_image(self, ref: str):
+        """Immagine estratta, ridotta alla larghezza dell'anteprima (None se il file manca)."""
+        path = resolve_image(ref)
+        if path is None:
+            return None
+        width = max(120, min(self.preview.winfo_width() - 60, self._pz(560)))
+        try:
+            key = (str(path), path.stat().st_mtime, width)
+        except OSError:
+            return None
+        image = self._image_cache.get(key)
+        if image is None:
+            from PIL import Image, ImageTk
+
+            try:
+                with Image.open(path) as source:
+                    scale = min(1.0, width / max(1, source.width))
+                    size = (max(1, round(source.width * scale)), max(1, round(source.height * scale)))
+                    image = ImageTk.PhotoImage(source.resize(size, Image.LANCZOS), master=self.preview)
+            except (OSError, ValueError):
+                return None
+            if len(self._image_cache) > 200:
+                self._image_cache.clear()
+            self._image_cache[key] = image
+        return image
 
     def _insert_heading(self, value: str, level: str, options: RenderOptions, plain: bool = False) -> None:
         """Titolo con il numero che gli darebbe LaTeX (1, 1.1, Capitolo 2, Parte I…)."""

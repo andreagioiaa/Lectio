@@ -47,9 +47,11 @@ from .theme import (
     current_theme,
     font,
     recolor_widget_tree,
+    sync_appearance,
 )
+from .theme_reveal import ThemeReveal
 from .video_view import VideoView
-from .widgets import render_state, set_window_icon
+from .widgets import glyph_icon, render_state, set_window_icon
 
 
 LOGGER = logging.getLogger(__name__)
@@ -102,6 +104,7 @@ class LectioApp(ctk.CTk):
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         self._ui_queue: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
         self.views: dict[str, Any] = {}
+        self._view_theme: dict[str, str] = {}  # tema con cui ogni vista e' dipinta
         self._hosts_warned = False
         # Tema salvato: la palette va scelta prima di creare i widget.
         try:
@@ -164,18 +167,18 @@ class LectioApp(ctk.CTk):
         except (AttributeError, OSError):
             pass
 
-    # Voci di navigazione: (chiave, icona, etichetta, etichetta breve)
+    # Voci di navigazione: (chiave, glifo Segoe MDL2, etichetta, etichetta breve)
     NAV_ITEMS = (
-        ("pomodoro", "◷", "Pomodoro", "Pomodoro"),
-        ("audio", "♫", "Audio", "Audio"),
-        ("videos", "▷", "Video e Trascrizione", "Video"),
-        ("pdf", "▤", "PDF e Slide", "PDF"),
-        ("blocker", "◈", "Blocco distrazioni", "Blocco"),
-        ("calendar", "▦", "Calendario", "Calendario"),
-        ("subjects", "▥", "Materie", "Materie"),
-        ("flashcards", "▣", "Flashcard", "Flashcard"),
-        ("analytics", "◔", "Analisi", "Analisi"),
-        ("settings", "⚙", "Impostazioni", "Impostazioni"),
+        ("pomodoro", "", "Pomodoro", "Pomodoro"),
+        ("audio", "", "Audio", "Audio"),
+        ("videos", "", "Video e Trascrizione", "Video"),
+        ("pdf", "", "PDF e Slide", "PDF"),
+        ("blocker", "", "Blocco distrazioni", "Blocco"),
+        ("calendar", "", "Calendario", "Calendario"),
+        ("subjects", "", "Materie", "Materie"),
+        ("flashcards", "", "Flashcard", "Flashcard"),
+        ("analytics", "", "Analisi", "Analisi"),
+        ("settings", "", "Impostazioni", "Impostazioni"),
     )
 
     def _build_sidebar(self) -> None:
@@ -203,20 +206,21 @@ class LectioApp(ctk.CTk):
         nav = ctk.CTkFrame(bar, fg_color="transparent")
         nav.grid(row=0, column=1, sticky="w")
         self.nav_frame = nav
-        for column, (key, icon, label, _short) in enumerate(self.NAV_ITEMS):
+        for column, (key, _glyph, label, _short) in enumerate(self.NAV_ITEMS):
             button = ctk.CTkButton(
                 nav,
-                text=f"{icon}  {label}",
+                text=label,
                 width=20,
-                height=36,
-                font=font(11, "bold"),
+                height=40,
+                font=font(12, "bold"),
                 fg_color="transparent",
                 hover_color=COLORS.surface_alt,
                 text_color=COLORS.text_muted,
-                corner_radius=9,
+                corner_radius=20,
+                compound="left",
                 command=lambda view_key=key: self.show_view(view_key),
             )
-            button.grid(row=0, column=column, padx=1)
+            button.grid(row=0, column=column, padx=2)
             self._nav_buttons[key] = button
 
         # Cambio tema: il simbolo mostra il tema in cui si passera' (sole = chiaro).
@@ -224,18 +228,20 @@ class LectioApp(ctk.CTk):
             bar,
             text="",
             width=40,
-            height=36,
+            height=40,
             font=font(18),
-            fg_color=COLORS.surface,
-            hover_color=COLORS.surface_hover,
+            fg_color="transparent",
+            hover_color=COLORS.surface_alt,
             text_color=COLORS.amber,
-            border_width=1,
-            border_color=COLORS.border,
-            corner_radius=10,
+            corner_radius=20,
             command=self.toggle_theme,
         )
         self.theme_button.grid(row=0, column=2, sticky="e", padx=(10, 14), pady=8)
         self._update_theme_button()
+        # linea sottile sotto la barra, come i separatori di X
+        tk.Frame(bar, height=1, bg=COLORS.border, bd=0, highlightthickness=0).place(
+            relx=0, rely=1.0, relwidth=1.0, anchor="sw"
+        )
 
         bar.bind("<Configure>", lambda _e: self._schedule_nav_layout())
         self.after(50, self._layout_nav)
@@ -250,13 +256,13 @@ class LectioApp(ctk.CTk):
 
     def _nav_texts(self, mode: str) -> dict[str, str]:
         texts = {}
-        for key, icon, label, short in self.NAV_ITEMS:
+        for key, _glyph, label, short in self.NAV_ITEMS:
             if mode == "full":
-                texts[key] = f"{icon}  {label}"
+                texts[key] = label
             elif mode == "short":
-                texts[key] = f"{icon} {short}"
+                texts[key] = short
             else:
-                texts[key] = icon
+                texts[key] = ""
         return texts
 
     def _layout_nav(self) -> None:
@@ -271,7 +277,7 @@ class LectioApp(ctk.CTk):
                 texts = self._nav_texts(mode)
                 for key, button in self._nav_buttons.items():
                     if button.cget("text") != texts[key]:
-                        button.configure(text=texts[key], width=36 if mode == "icons" else 20)
+                        button.configure(text=texts[key], width=40 if mode == "icons" else 20)
                 self.nav_frame.update_idletasks()
                 if self.nav_frame.winfo_reqwidth() + fixed <= available or mode == "icons":
                     self._nav_mode = mode
@@ -283,34 +289,36 @@ class LectioApp(ctk.CTk):
     def _update_theme_button(self) -> None:
         light = current_theme() == THEME_LIGHT
         # in tema chiaro si mostra la luna (si torna allo scuro), in tema scuro il sole
+        color = COLORS.purple if light else COLORS.amber
+        icon = glyph_icon("" if light else "", color, 20)
         self.theme_button.configure(
-            text="☾" if light else "☀",
-            text_color=COLORS.purple if light else COLORS.amber,
+            image=icon,
+            text="" if icon else ("☾" if light else "☀"),
+            text_color=color,
         )
 
     def toggle_theme(self) -> None:
         """Passa dal tema scuro al chiaro (e viceversa) senza riavviare l'app."""
         target = THEME_DARK if current_theme() == THEME_LIGHT else THEME_LIGHT
         started = time.perf_counter()
+        reveal = ThemeReveal.capture(self)
         try:
             self.configure(cursor="watch")
             self.update_idletasks()
         except tk.TclError:
             pass
-        mapping = apply_palette(target)
-        recolor_widget_tree(self, mapping)
+        # Solo la sezione visibile si ricolora subito; le altre alla prossima
+        # apertura (``_sync_view_theme``): ricolorarle tutte richiede secondi.
+        hidden = [view for key, view in self.views.items() if key != self._current_view]
+        mapping = apply_palette(target, defer=hidden)
+        recolor_widget_tree(self, mapping, skip=hidden)
+        if self._current_view:
+            self._sync_view_theme(self._current_view)
         self.configure(fg_color=COLORS.bg)
         self._update_theme_button()
-        for view in self.views.values():
-            hook = getattr(view, "on_theme_changed", None)
-            if hook is None:
-                continue
-            try:
-                hook()
-            except Exception:
-                self.logger.exception("Aggiornamento del tema non riuscito per una vista.")
         for button in self._nav_buttons.values():
             button._lectio_colors = None  # i colori della voce attiva vanno ricalcolati
+        self._paint_nav()
         try:
             self.db.set_setting("ui_theme", target)
         except Exception:
@@ -322,6 +330,24 @@ class LectioApp(ctk.CTk):
         self.logger.info(
             "Tema %s applicato in %.0f ms.", target, (time.perf_counter() - started) * 1000
         )
+        if reveal is not None:
+            reveal.play(self)
+
+    def _sync_view_theme(self, key: str) -> None:
+        """Porta la vista al tema attivo se era stata dipinta con l'altro."""
+        view = self.views.get(key)
+        painted = self._view_theme.get(key, current_theme())
+        if view is None or painted == current_theme():
+            return
+        recolor_widget_tree(view, color_map(painted, current_theme()))
+        sync_appearance(view)
+        self._view_theme[key] = current_theme()
+        hook = getattr(view, "on_theme_changed", None)
+        if hook is not None:
+            try:
+                hook()
+            except Exception:
+                self.logger.exception("Aggiornamento del tema non riuscito per la vista '%s'.", key)
 
     def _build_content(self) -> None:
         self.content = ctk.CTkFrame(self, fg_color=COLORS.bg, corner_radius=0)
@@ -363,6 +389,7 @@ class LectioApp(ctk.CTk):
             view.grid(row=0, column=0, sticky="nsew", padx=24, pady=(18, 12))
             view.lower()
             self.views[key] = view
+            self._view_theme[key] = current_theme()
             self.logger.debug(
                 "Vista '%s' creata in %.0f ms.", key, (time.perf_counter() - started) * 1000
             )
@@ -453,6 +480,7 @@ class LectioApp(ctk.CTk):
         if old is not None and hasattr(old, "on_hide"):
             old.on_hide()
         view = self._ensure_view(key)
+        self._sync_view_theme(key)
         self._current_view = key
         # La vista si aggiorna (solo se i dati sono cambiati) mentre e' ancora
         # coperta, poi viene portata in primo piano: nessuna rimozione dalla
@@ -460,15 +488,25 @@ class LectioApp(ctk.CTk):
         if hasattr(view, "on_show"):
             view.on_show()
         view.tkraise()
+        self._paint_nav()
+
+    def _paint_nav(self) -> None:
+        """Voce attiva: pillola con testo chiaro e icona blu; le altre in grigio."""
+        glyphs = {key: glyph for key, glyph, _label, _short in self.NAV_ITEMS}
         for nav_key, button in self._nav_buttons.items():
-            active = nav_key == key
+            active = nav_key == self._current_view
             colors = (
                 COLORS.surface_alt if active else "transparent",
+                COLORS.text if active else COLORS.text_muted,
                 COLORS.accent if active else COLORS.text_muted,
             )
             if getattr(button, "_lectio_colors", None) != colors:
                 button._lectio_colors = colors
-                button.configure(fg_color=colors[0], text_color=colors[1])
+                button.configure(
+                    fg_color=colors[0],
+                    text_color=colors[1],
+                    image=glyph_icon(glyphs[nav_key], colors[2], 20),
+                )
 
     # ------------------------------------------------------------------ events
     def start_from_event(self, event: dict[str, Any]) -> None:

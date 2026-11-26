@@ -369,5 +369,115 @@ class PdfExtractionTests(unittest.TestCase):
         self.assertTrue(any(event["type"] == "progress" for event in events))
 
 
+class SlideTemplateAndColorTests(unittest.TestCase):
+    def test_template_lines_with_two_slides_per_page(self) -> None:
+        pages = []
+        for number in range(1, 5):
+            lines = []
+            for top in (0, 420):  # due slide per foglio: il piè di pagina e' anche a meta' pagina
+                lines += [
+                    Line(f"Sezione {number}", 250, top + 17, 290, top + 24, size=7),
+                    Line("Titolo ripetuto", 53, top + 31, 300, top + 51, size=21),
+                    Line(f"Contenuto {number}-{top}: una frase normale di una slide", 50, top + 120, 500, top + 134, size=14),
+                    Line("Sistemi Operativi e Lab. 25/26", 50, top + 396, 138, top + 403, size=7),
+                    Line(str(number * 2), 542, top + 396, 545, top + 403, size=7),
+                ]
+            pages.append(PageLines(number=number, width=595, height=842, lines=lines))
+        strip_repeated_margins(pages)
+        self.assertEqual(
+            [line.text for line in pages[1].lines],
+            ["Titolo ripetuto", "Contenuto 2-0: una frase normale di una slide",
+             "Titolo ripetuto", "Contenuto 2-420: una frase normale di una slide"],
+        )
+
+    def test_color_names(self) -> None:
+        from study_manager.services.pdf_tools.extract import text_color_name
+
+        self.assertEqual(
+            [text_color_name(c) for c in (0x000000, 0xFFFFFF, 0x32203A, 0x0000FF, 0xFF0000, 0x00AEEF, 0xEC008C)],
+            ["", "", "", "blue", "red", "cyan", "magenta"],
+        )
+
+    def test_color_marks_merge_and_fallback(self) -> None:
+        from study_manager.services.pdf_tools.extract import apply_color_marks, merge_color_runs
+
+        self.assertEqual(
+            apply_color_marks("Idea: \x01blue\x02caricare\x03 \x01blue\x02le pagine\x03 ora"),
+            "Idea: \\textcolor{blue}{caricare le pagine} ora",
+        )
+        self.assertEqual(apply_color_marks("rotto \x01red\x02testo"), "rotto testo")
+        self.assertEqual(
+            merge_color_runs("\\textcolor{red}{a} \\textcolor{red}{b} \\textcolor{blue}{c}"),
+            "\\textcolor{red}{a b} \\textcolor{blue}{c}",
+        )
+
+    def test_image_block_roundtrip(self) -> None:
+        source = "=== SLIDE 1 ===\n\n# T\n\n![cap_imm1](cap-abc123/cap_imm1.png)\n"
+        self.assertEqual(render_markdown(PdfDocument(Path("x.pdf"), "x", parse_markdown(source))), source)
+        latex = markdown_to_latex(source, RenderOptions(include_preamble=False), root=False)
+        self.assertIn("\\includegraphics[", latex)
+        self.assertIn("![cap_imm1](cap-abc123/cap_imm1.png)", latex_to_markdown(latex))
+        self.assertIn("[Immagine: cap_imm1]", markdown_to_txt(source, RenderOptions()))
+
+    def test_chapter_slug(self) -> None:
+        from study_manager.services.pdf_tools.images import chapter_slug, image_name
+
+        self.assertEqual(chapter_slug("09. Memoria Virtuale"), "memoriavirtuale")
+        self.assertEqual(image_name(Path("03 - Unità di controllo.pdf"), 100), "unitadicontrollo_imm100")
+
+
+@unittest.skipUnless(import_fitz() is not None, "PyMuPDF non installato")
+class PdfImagesAndColorsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.folder = tempfile.TemporaryDirectory()
+        self._env = os.environ.get("LECTIO_DATA_DIR")
+        os.environ["LECTIO_DATA_DIR"] = self.folder.name
+        self.pdf = Path(self.folder.name) / "09. Memoria Virtuale.pdf"
+        fitz = import_fitz()
+        logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 60), False)
+        logo.set_rect(logo.irect, (200, 0, 0))
+        diagram = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 300, 200), False)
+        diagram.set_rect(diagram.irect, (0, 120, 200))
+        bullet = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 8, 8), False)
+        bullet.set_rect(bullet.irect, (0, 0, 0))
+        document = fitz.open()
+        for number in range(1, 5):
+            page = document.new_page(width=960, height=540)
+            page.insert_text((60, 90), f"Argomento {number}", fontsize=32)
+            page.insert_image(fitz.Rect(880, 10, 940, 70), pixmap=logo)  # logo del template
+            page.insert_image(fitz.Rect(60, 148, 68, 156), pixmap=bullet)
+            page.insert_text((76, 156), "Concetto normale", fontsize=20)
+            page.insert_text((60, 200), "Parola", fontsize=20)
+            page.insert_text((140, 200), "evidenziata", fontsize=20, color=(1, 0, 0))
+            if number == 2:
+                page.insert_image(fitz.Rect(300, 250, 600, 450), pixmap=diagram)
+        document.save(str(self.pdf))
+        document.close()
+
+    def tearDown(self) -> None:
+        if self._env is None:
+            os.environ.pop("LECTIO_DATA_DIR", None)
+        else:
+            os.environ["LECTIO_DATA_DIR"] = self._env
+        self.folder.cleanup()
+
+    def test_images_colors_and_image_bullets(self) -> None:
+        from study_manager.services.pdf_tools.images import resolve_image
+
+        markdown = render_markdown(convert_pdf(self.pdf, ExtractOptions(ocr_mode="off")))
+        self.assertIn("\\textcolor{red}{evidenziata}", markdown)
+        self.assertIn("- Concetto normale", markdown)
+        refs = [line for line in markdown.splitlines() if line.startswith("![")]
+        self.assertEqual(len(refs), 1)  # il logo ripetuto e i punti elenco non sono immagini di contenuto
+        self.assertTrue(refs[0].startswith("![memoriavirtuale_imm1](memoriavirtuale-"))
+        slide_two = markdown.split("=== SLIDE 2 ===")[1].split("=== SLIDE 3 ===")[0]
+        self.assertIn(refs[0], slide_two)
+        ref = refs[0][refs[0].index("(") + 1 : -1]
+        self.assertIsNotNone(resolve_image(ref))
+        # una seconda estrazione riusa la stessa cartella senza lasciare file vecchi
+        convert_pdf(self.pdf, ExtractOptions(ocr_mode="off"))
+        self.assertEqual(len(list(resolve_image(ref).parent.glob("*.png"))), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

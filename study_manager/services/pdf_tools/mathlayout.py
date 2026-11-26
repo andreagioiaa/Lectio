@@ -65,6 +65,7 @@ class Atom:
     math: bool = False
     bigop: str | None = None
     role: str = "base"  # base | up | down
+    color: int = 0  # colore del testo come intero RGB (0xRRGGBB)
 
     @property
     def stripped(self) -> str:
@@ -86,6 +87,7 @@ def atom_from_span(span: dict[str, Any]) -> Atom:
         size=float(span.get("size", 11.0)) or 11.0,
         font=font,
         flags=int(span.get("flags", 0)),
+        color=int(span.get("color", 0) or 0),
     )
     stripped = atom.stripped
     if "CMEX" in font.upper() and stripped:

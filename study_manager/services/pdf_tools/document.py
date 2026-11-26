@@ -43,6 +43,7 @@ BLOCK_MATH = "math"
 BLOCK_TABLE = "table"
 BLOCK_LETTER = "letter"
 BLOCK_CODE = "code"
+BLOCK_IMAGE = "image"  # text = riferimento del file (vedi ``images.py``)
 
 LIST_KINDS = (BLOCK_BULLET, BLOCK_NUMBER, BLOCK_LETTER)
 MAX_LIST_LEVEL = 3
@@ -57,6 +58,7 @@ FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*([\w+#.-]*)\s*$")
 LATEX_SLIDE_MARKER_RE = re.compile(r"^\s*%\s*=+\s*Slide\s+\d+\s*=+\s*$", re.IGNORECASE)
 TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+IMAGE_LINE_RE = re.compile(r"^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
@@ -296,6 +298,8 @@ def render_blocks(blocks: list[Block]) -> list[str]:
             lines.extend(["$$", text, "$$"])
         elif block.kind == BLOCK_TABLE:
             lines.extend(text.splitlines())
+        elif block.kind == BLOCK_IMAGE:
+            lines.append(f"![{Path(text).stem}]({text})")
         else:
             lines.append(text)
         previous_kind = block.kind
@@ -407,6 +411,11 @@ def parse_markdown(text: str) -> list[Slide]:
             list_item = None
             continue
         if stripped in {"_(slide senza testo)_"}:
+            continue
+        image = IMAGE_LINE_RE.match(line)
+        if image:
+            flush_all()
+            current.blocks.append(Block(BLOCK_IMAGE, image.group(2)))
             continue
         line_no_images = IMAGE_RE.sub("", line)
         if not line_no_images.strip():

@@ -102,9 +102,11 @@ def _remap_dict(values: dict, mapping: dict[str, str]) -> None:
             values[key] = mapping[value.upper()]
 
 
-def apply_palette(theme: str) -> dict[str, str]:
+def apply_palette(theme: str, defer: Iterable = ()) -> dict[str, str]:
     """Attiva il tema: aggiorna ``COLORS``, CustomTkinter e i dizionari registrati.
 
+    I widget dentro ``defer`` non vengono ridisegnati da CustomTkinter ora:
+    lo fara' ``sync_appearance`` quando torneranno visibili.
     Restituisce la mappa dei colori da passare a ``recolor_widget_tree``.
     """
     global _current
@@ -116,11 +118,37 @@ def apply_palette(theme: str) -> dict[str, str]:
     for values in _color_dicts:
         _remap_dict(values, mapping)
     _current = theme
+    callbacks = ctk.AppearanceModeTracker.callback_list
+    roots = tuple(str(widget) for widget in defer)
+    held = [cb for cb in callbacks if _is_under(getattr(cb, "__self__", None), roots)]
+    held_ids = {id(cb) for cb in held}
+    callbacks[:] = [cb for cb in callbacks if id(cb) not in held_ids]
     try:
         ctk.set_appearance_mode(theme)
     except Exception:
         LOGGER.exception("Cambio della modalita' di CustomTkinter non riuscito.")
+    finally:
+        callbacks.extend(held)
     return mapping
+
+
+def _is_under(widget, roots: tuple[str, ...]) -> bool:
+    if widget is None or not roots:
+        return False
+    path = str(widget)
+    return any(path == root or path.startswith(root + ".") for root in roots)
+
+
+def sync_appearance(root) -> None:
+    """Ridisegna i widget CustomTkinter rimasti alla modalita' precedente (vedi ``apply_palette``)."""
+    mode = ctk.AppearanceModeTracker.appearance_mode
+    name = "Dark" if mode == 1 else "Light"
+    for widget in _iter_tree(root):
+        if getattr(widget, "_appearance_mode", mode) != mode and hasattr(widget, "_set_appearance_mode"):
+            try:
+                widget._set_appearance_mode(name)
+            except Exception:
+                LOGGER.debug("Ridisegno non riuscito per %r", widget, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +249,12 @@ def _plan_tk(widget, mapping: dict[str, str]) -> list[Callable[[], None]]:
     return actions
 
 
-def _iter_tree(root) -> Iterable:
+def _iter_tree(root, skip: frozenset = frozenset()) -> Iterable:
     stack = [root]
     while stack:
         widget = stack.pop()
+        if widget in skip:
+            continue
         yield widget
         try:
             children = widget.winfo_children()
@@ -233,8 +263,10 @@ def _iter_tree(root) -> Iterable:
         stack.extend(reversed(children))
 
 
-def recolor_widget_tree(root, mapping: dict[str, str]) -> int:
+def recolor_widget_tree(root, mapping: dict[str, str], skip: Iterable = ()) -> int:
     """Sostituisce i colori di ``root`` e di tutti i suoi discendenti; restituisce i widget visitati.
+
+    I widget in ``skip`` (e i loro discendenti) restano invariati.
 
     Prima si leggono *tutti* i colori e solo dopo si applicano le modifiche:
     configurare un widget CTk aggiorna subito i suoi widget interni, e alcuni
@@ -248,7 +280,7 @@ def recolor_widget_tree(root, mapping: dict[str, str]) -> int:
     actions: list[Callable[[], None]] = []
     scrollables: list = []
     count = 0
-    for widget in _iter_tree(root):
+    for widget in _iter_tree(root, frozenset(skip)):
         count += 1
         try:
             if isinstance(widget, ctk.CTkScrollableFrame):

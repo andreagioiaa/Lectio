@@ -138,6 +138,9 @@ class RemoveTextDialog(ctk.CTkToplevel):
         self.undo_button = self._button(buttons, "Annulla rimozione", self.undo)
         self.undo_button.grid(row=0, column=0, sticky="w")
         self.undo_button.configure(state="disabled")
+        self._button(buttons, "Togli === SLIDE ===", self.view.remove_slide_markers).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
         self._button(buttons, "Chiudi", self.close).grid(row=0, column=1, sticky="e", padx=(6, 6))
         self.remove_button = ctk.CTkButton(
             buttons, text="Rimuovi tutto", height=34, font=font(12, "bold"), corner_radius=9,

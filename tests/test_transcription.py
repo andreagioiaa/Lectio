@@ -9,6 +9,7 @@ from pathlib import Path
 
 from study_manager.database import Database
 from study_manager.services.transcription import (
+    DEFAULT_MODEL,
     MODEL_CATALOG,
     TranscriptBlock,
     TranscriptionError,
@@ -183,6 +184,51 @@ class VideoDatabaseTests(unittest.TestCase):
 
         self.db.delete_video_lesson(lesson_id)
         self.assertIsNone(self.db.get_video_lesson(lesson_id))
+
+    def test_video_doubts_and_notes(self) -> None:
+        lesson_id = self.db.add_video_lesson("Lezione", "a.mp4", "Biologia")
+        lesson = self.db.get_video_lesson(lesson_id)
+        assert lesson is not None
+        self.assertEqual((lesson["doubts"], lesson["notes"]), ("[]", ""))
+        self.db.update_video_lesson_study(lesson_id, [{"text": "[01:02] perché?", "card": False}], "[00:10] nota")
+        lesson = self.db.get_video_lesson(lesson_id)
+        assert lesson is not None
+        self.assertIn("perché", lesson["doubts"])
+        self.assertEqual(lesson["notes"], "[00:10] nota")
+
+    def test_model_catalog_has_pros_and_cons(self) -> None:
+        self.assertIn(DEFAULT_MODEL, MODEL_CATALOG)
+        for info in MODEL_CATALOG.values():
+            self.assertTrue(info["pros"] and info["cons"])
+
+    def test_recommend_model_by_hardware(self) -> None:
+        from study_manager.services.transcription import recommend_model
+
+        self.assertEqual(recommend_model(4, 15.9), "small-q5_1")
+        self.assertEqual(recommend_model(8, 32), "large-v3-turbo-q5_0")
+        self.assertEqual(recommend_model(6, 16), "medium-q5_0")
+        self.assertEqual(recommend_model(2, 4), "base-q5_1")
+        self.assertEqual(recommend_model(2, 2), "tiny-q5_1")
+
+    def test_estimate_seconds_uses_measurements(self) -> None:
+        from study_manager.services.transcription import estimate_seconds
+        from study_manager.ui.video_view import format_eta
+
+        self.assertAlmostEqual(estimate_seconds("small-q5_1", 3600, 4, {}), 900)
+        # Large misurato 2x piu' lento della stima: anche Small viene raddoppiato.
+        self.assertAlmostEqual(estimate_seconds("small-q5_1", 3600, 4, {"large-v3-turbo-q5_0": 1.3}), 1800)
+        self.assertAlmostEqual(estimate_seconds("small-q5_1", 100, 4, {"small-q5_1": 0.5}), 50)
+        self.assertEqual(format_eta(150), "~2 min")
+        self.assertEqual(format_eta(4800), "~1 h 20 min")
+
+    def test_progress_suffix_estimates_finish(self) -> None:
+        from datetime import datetime
+
+        from study_manager.ui.video_view import progress_suffix
+
+        now = datetime(2026, 1, 1, 10, 0)
+        self.assertEqual(progress_suffix(0.25, 600, now), " (25% · fine stimata 10:30)")
+        self.assertEqual(progress_suffix(0.01, 600, now), " (1%)")
 
     def test_filter_and_subject_tags(self) -> None:
         self.db.add_video_lesson("A", "a.mp4", "Biologia")

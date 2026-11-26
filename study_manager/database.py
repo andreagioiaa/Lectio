@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -193,6 +194,8 @@ CREATE TABLE IF NOT EXISTS video_lessons (
     model TEXT NOT NULL DEFAULT '',
     language TEXT NOT NULL DEFAULT '',
     error TEXT NOT NULL DEFAULT '',
+    doubts TEXT NOT NULL DEFAULT '[]',
+    notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -416,6 +419,16 @@ class Database:
                     )
         self._migrate_v7_google(connection)
         self._migrate_v8_note_blocks(connection)
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(video_lessons)").fetchall()
+        }
+        for column, definition in (
+            ("doubts", "TEXT NOT NULL DEFAULT '[]'"),
+            ("notes", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if columns and column not in columns:
+                connection.execute(f"ALTER TABLE video_lessons ADD COLUMN {column} {definition}")
 
     @staticmethod
     def _migrate_v8_note_blocks(connection: sqlite3.Connection) -> None:
@@ -1085,6 +1098,13 @@ class Database:
                 now_str(),
                 int(video_id),
             ),
+        )
+
+    def update_video_lesson_study(self, video_id: int, doubts: list[dict[str, Any]], notes: str) -> None:
+        """Dubbi (``[{"text", "card"}]``) e annotazioni scritti durante la visione."""
+        self._connection().execute(
+            "UPDATE video_lessons SET doubts = ?, notes = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(doubts, ensure_ascii=False), str(notes or ""), now_str(), int(video_id)),
         )
 
     def get_video_lesson(self, video_id: int) -> dict[str, Any] | None:

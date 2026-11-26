@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog
 from typing import Any, Callable
@@ -12,6 +14,7 @@ from typing import Any, Callable
 import customtkinter as ctk
 
 from ..config import COLORS
+from ..services.notify import notify
 from ..services.subject_folders import KIND_TRANSCRIPTS, move_file_into
 from ..services.transcription import (
     DEFAULT_LANGUAGE,
@@ -20,16 +23,22 @@ from ..services.transcription import (
     LANGUAGE_LABELS,
     MODEL_CATALOG,
     SUPPORTED_VIDEO_EXTENSIONS,
+    estimate_seconds,
+    probe_media_duration,
     TranscriptionError,
     default_transcript_name,
     find_ffmpeg,
     model_is_available,
     model_label,
+    physical_cores,
+    recommend_model,
     rename_transcript_file,
+    total_ram_gb,
     transcript_filename,
 )
 from ..utils import format_clock, safe_float
 from .theme import font, mono
+from .video_player import VLC_MISSING, VideoPlayerWindow, load_vlc
 from .widgets import (
     Card,
     PageHeader,
@@ -51,6 +60,24 @@ STATUS_LABELS = {
 }
 
 
+def progress_suffix(percent: float, elapsed: float, now: datetime) -> str:
+    """`` (42% · fine stimata 15:30)``: stima lineare sul tempo gia' trascorso nella fase."""
+    text = f"{percent:.0%}"
+    if 0.02 <= percent < 1 and elapsed >= 5:
+        finish = now + timedelta(seconds=elapsed * (1 - percent) / percent)
+        text += f" · fine stimata {finish:%H:%M}"
+    return f" ({text})"
+
+
+def format_eta(seconds: float) -> str:
+    """``~8 min`` / ``~1 h 20 min``, arrotondato ai 5 minuti oltre il quarto d'ora."""
+    minutes = max(1, round(seconds / 60))
+    if minutes > 15:
+        minutes = 5 * round(minutes / 5)
+    hours, rest = divmod(minutes, 60)
+    return f"~{hours} h {rest:02d} min" if hours else f"~{minutes} min"
+
+
 class VideoView(ctk.CTkFrame):
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -67,6 +94,9 @@ class VideoView(ctk.CTkFrame):
         self._live_message = ""
         self._live_phase = ""
         self._last_db_progress = 0.0
+        self._phase_started = 0.0
+        self._live_lines: list[str] = []
+        self._players: dict[int, VideoPlayerWindow] = {}
         self._detail_progress: ctk.CTkProgressBar | None = None
         self._detail_status: ctk.CTkLabel | None = None
         self._transcript_box: ctk.CTkTextbox | None = None
@@ -579,11 +609,18 @@ class VideoView(ctk.CTkFrame):
         actions.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 6))
         self._action_button(
             actions,
+            "▶  Guarda",
+            90,
+            lambda: self._watch_video(lesson_id),
+            primary=True,
+        ).pack(side="left", padx=(0, 6))
+        self._action_button(
+            actions,
             "Apri video",
             96,
             lambda: self._open_file(str(video_path), "Video"),
             primary=False,
-        ).pack(side="left", padx=(0, 6))
+        ).pack(side="left", padx=6)
         self._action_button(
             actions,
             "Apri cartella",
@@ -802,7 +839,9 @@ class VideoView(ctk.CTkFrame):
         exists: bool,
         is_active: bool,
     ) -> str:
-        if transcript_file is not None and exists:
+        if is_active and self._live_lines:
+            return "\n".join(self._live_lines) + "\n"
+        if transcript_file is not None and exists and not is_active:
             try:
                 text = transcript_file.read_text(encoding="utf-8", errors="replace")
                 if len(text) > 1_500_000:
@@ -811,7 +850,7 @@ class VideoView(ctk.CTkFrame):
             except OSError as exc:
                 return f"Impossibile leggere il file .txt:\n{exc}"
         if is_active:
-            return "La trascrizione è in corso. Il testo comparirà al termine dell'elaborazione."
+            return "La trascrizione è in corso. Il testo comparirà qui mentre viene riconosciuto."
         return (
             "Nessuna trascrizione disponibile.\n\n"
             "Premi «Trascrivi» per estrarre l'audio con FFmpeg e generare il file .txt "
@@ -898,7 +937,8 @@ class VideoView(ctk.CTkFrame):
         self._live_progress = 0.0
         self._live_message = "Avvio della trascrizione..."
         self._live_phase = "model"
-        self._last_db_progress = time.monotonic()
+        self._live_lines = []
+        self._phase_started = self._last_db_progress = time.monotonic()
         ok, error = self.transcriptions.start(
             lesson_id=lesson_id,
             video_path=str(video_path),
@@ -934,8 +974,27 @@ class VideoView(ctk.CTkFrame):
             return
         self._active_lesson_id = lesson_id
         self._live_progress = max(0.0, min(1.0, safe_float(event.get("percent", 0))))
-        self._live_message = str(event.get("message") or "Elaborazione in corso...")
-        self._live_phase = str(event.get("phase") or "")
+        phase = str(event.get("phase") or "")
+        if phase != self._live_phase:
+            self._phase_started = time.monotonic()
+        self._live_phase = phase
+        self._live_message = str(event.get("message") or "Elaborazione in corso...") + progress_suffix(
+            self._live_progress, time.monotonic() - self._phase_started, datetime.now()
+        )
+        line = str(event.get("text") or "")
+        if line:
+            self._live_lines.append(line)
+            if self._selected_id == lesson_id and self._transcript_box is not None:
+                try:
+                    box = self._transcript_box
+                    box.configure(state="normal")
+                    if len(self._live_lines) == 1:
+                        box.delete("1.0", "end")
+                    box.insert("end", line + "\n")
+                    box.see("end")
+                    box.configure(state="disabled")
+                except Exception:
+                    pass
         if self._selected_id == lesson_id and self._detail_status is not None:
             try:
                 self._detail_status.configure(
@@ -960,11 +1019,23 @@ class VideoView(ctk.CTkFrame):
 
     def _on_job_done(self, event: dict[str, Any]) -> None:
         lesson_id = int(event.get("lesson_id", 0) or self._active_lesson_id or 0)
+        result = event.get("result") or {}
+        duration = safe_float(result.get("duration_seconds", 0))
+        if event.get("ok") and self._live_phase == "transcribe" and duration >= 60:
+            # Velocita' reale di questo PC: rende piu' precise le stime dei tempi future.
+            self._save_measured_speed(str(result.get("model") or ""), (time.monotonic() - self._phase_started) / duration)
         self._active_lesson_id = None
         self._live_message = ""
         self._live_phase = ""
+        self._live_lines = []
         if not lesson_id:
             return
+        if not event.get("cancelled"):
+            done_lesson = self.db.get_video_lesson(lesson_id) or {}
+            notify(
+                "Lectio · Trascrizione " + ("completata" if event.get("ok") else "non riuscita"),
+                str(done_lesson.get("title") or "Videolezione"),
+            )
         if event.get("ok"):
             result = event.get("result") or {}
             try:
@@ -1018,6 +1089,47 @@ class VideoView(ctk.CTkFrame):
                     error,
                     parent=self.winfo_toplevel(),
                 )
+
+    def measured_speeds(self) -> dict[str, float]:
+        try:
+            raw = json.loads(str(self.db.get_settings().get("transcription_speed") or "{}"))
+            return {str(key): float(value) for key, value in raw.items() if float(value) > 0}
+        except (ValueError, TypeError, AttributeError):
+            return {}
+
+    def _save_measured_speed(self, model: str, factor: float) -> None:
+        speeds = self.measured_speeds()
+        # Media mobile: una singola trascrizione anomala non stravolge le stime.
+        speeds[model] = round(factor if model not in speeds else (speeds[model] + factor) / 2, 4)
+        try:
+            self.db.set_settings({"transcription_speed": json.dumps(speeds)})
+        except Exception:
+            self.app.logger.exception("Salvataggio velocita' di trascrizione non riuscito.")
+
+    def _watch_video(self, lesson_id: int) -> None:
+        player = self._players.get(lesson_id)
+        if player is not None and player.winfo_exists():
+            player.lift()
+            player.focus_set()
+            return
+        lesson = self.db.get_video_lesson(lesson_id)
+        path = str((lesson or {}).get("video_path") or "")
+        if lesson is None or not Path(path).is_file():
+            self._open_file(path, "Video")  # mostra l'errore "non trovato"
+            return
+        vlc = load_vlc()
+        if vlc is None:
+            if messagebox.askyesno(
+                "VLC non trovato",
+                VLC_MISSING + "\n\nAprire intanto il video con il lettore di sistema?",
+                parent=self.winfo_toplevel(),
+            ):
+                self._open_file(path, "Video")
+            return
+        self._players[lesson_id] = VideoPlayerWindow(self, lesson, vlc)
+
+    def player_closed(self, lesson_id: int) -> None:
+        self._players.pop(lesson_id, None)
 
     def _cancel_transcription(self, lesson_id: int) -> None:
         job = self.transcriptions.current_job()
@@ -1202,6 +1314,9 @@ class VideoDialog(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _event: self.destroy())
         if lesson:
             self._populate()
+        elif view._filter_subject != ALL_SUBJECTS:
+            self.subject_combo.set(view._filter_subject)
+            self.subject_var.set(view._filter_subject)
 
     def _build(self) -> None:
         ctk.CTkLabel(
@@ -1462,8 +1577,21 @@ class TranscribeDialog(ctk.CTkToplevel):
         self.app = view.app
         self.db = view.db
         self.lesson = lesson
+        self._duration = safe_float(lesson.get("duration_seconds", 0))
+        ffmpeg = find_ffmpeg(self.app.paths["sounds"])
+        if self._duration <= 0 and ffmpeg is not None:
+            try:
+                self._duration = probe_media_duration(ffmpeg, str(lesson.get("video_path") or ""))
+            except Exception:
+                self._duration = 0.0
+        speeds, cores = view.measured_speeds(), physical_cores()
+        self._estimates = {
+            key: estimate_seconds(key, self._duration, cores, speeds) for key in MODEL_CATALOG
+        } if self._duration > 0 else {}
         self._model_labels = {
-            key: str(value.get("label") or key) for key, value in MODEL_CATALOG.items()
+            key: str(value.get("label") or key)
+            + (f" · {format_eta(self._estimates[key])}" if key in self._estimates else "")
+            for key, value in MODEL_CATALOG.items()
         }
         self._model_keys = {label: key for key, label in self._model_labels.items()}
         self._language_labels = {label: code for label, code in LANGUAGE_CHOICES.items()}
@@ -1473,7 +1601,7 @@ class TranscribeDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.transient(view.winfo_toplevel())
         set_window_icon(self, self.app.paths["icon"])
-        center_window(self, 680, 650)
+        center_window(self, 680, 720)
         self.grid_columnconfigure(0, weight=1)
         self._build()
         self.grab_set()
@@ -1619,10 +1747,13 @@ class TranscribeDialog(ctk.CTkToplevel):
         self.language_combo.pack(fill="x")
 
         settings = self.db.get_settings()
-        selected_model = str(settings.get("transcription_model") or DEFAULT_MODEL)
-        if selected_model not in self._model_labels:
-            selected_model = DEFAULT_MODEL
-        self.model_combo.set(self._model_labels[selected_model])
+        cores, ram = physical_cores(), total_ram_gb()
+        self._recommended = recommend_model(cores, ram) if ram else DEFAULT_MODEL
+        self._hardware_text = (
+            f"Il tuo PC: {cores} core fisici, {ram:.0f} GB di RAM → consigliato "
+            f"{model_label(self._recommended).split(' (')[0]}."
+        )
+        self.model_combo.set(self._model_labels[self._recommended])
         selected_language = str(settings.get("transcription_language") or DEFAULT_LANGUAGE)
         if selected_language not in self._language_codes:
             selected_language = DEFAULT_LANGUAGE
@@ -1717,19 +1848,31 @@ class TranscribeDialog(ctk.CTkToplevel):
     def _selected_model(self) -> str:
         return self._model_keys.get(self.model_combo.get(), DEFAULT_MODEL)
 
+    def _eta_text(self, model: str) -> str:
+        seconds = self._estimates.get(model)
+        if seconds is None:
+            return "Tempo stimato non disponibile: durata del video sconosciuta."
+        finish = datetime.now() + timedelta(seconds=seconds)
+        source = "misurato su questo PC" if model in self.view.measured_speeds() else "stima"
+        return (
+            f"Tempo per questo video ({format_clock(self._duration)}): {format_eta(seconds)} "
+            f"({source}), fine verso le {finish:%H:%M}. Puoi lasciarla in background e continuare a usare Lectio."
+        )
+
     def _update_model_info(self) -> None:
         model = self._selected_model()
+        info = MODEL_CATALOG[model]
         if model_is_available(self.view.transcriptions.models_dir, model):
-            text = f"{model_label(model)}: modello già disponibile sul PC."
+            status = "Modello già disponibile sul PC."
             color = COLORS.green
         else:
-            expected = int(MODEL_CATALOG[model]["bytes"]) / (1024 * 1024)
-            text = (
-                f"{model_label(model)}: verrà scaricato ora (circa {expected:.0f} MB, "
-                "una sola volta)."
-            )
-            color = COLORS.text_faint
-        self.model_info.configure(text=text, text_color=color)
+            expected = int(info["bytes"]) / (1024 * 1024)
+            status = f"Verrà scaricato ora (circa {expected:.0f} MB, una sola volta)."
+            color = COLORS.text_muted
+        self.model_info.configure(
+            text=f"{self._hardware_text}\n{self._eta_text(model)}\n+  {info['pros']}\n−  {info['cons']}\n{status}",
+            text_color=color,
+        )
 
     def _start(self) -> None:
         name = self.name_var.get().strip()
@@ -1740,12 +1883,7 @@ class TranscribeDialog(ctk.CTkToplevel):
         language = self._language_labels.get(self.language_combo.get(), DEFAULT_LANGUAGE)
         subject = self.subject_var.get().strip()
         try:
-            self.db.set_settings(
-                {
-                    "transcription_model": model,
-                    "transcription_language": language,
-                }
-            )
+            self.db.set_settings({"transcription_language": language})
         except Exception:
             self.app.logger.exception("Salvataggio impostazioni trascrizione non riuscito.")
         self.grab_release()

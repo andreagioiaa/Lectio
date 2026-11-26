@@ -21,6 +21,8 @@ DOC = {
     "latex": {"numbered": True, "embed": True, "base_level": "section", "root_title": "Lezione 1"},
     "block_id": 7,
     "cursor": "12.4",
+    "doubts": [{"text": "Perche' serve il bit di validita'?", "card": False},
+               {"text": "Cos'e' l'anomalia di Belady?", "card": True}],
 }
 
 
@@ -43,6 +45,15 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(data["sources"], ["C:/slide/lezione1.pdf"])
         self.assertAlmostEqual(data["saved_at"], saved_at)
         self.assertFalse(self.path.with_name("pdf_draft.json.tmp").exists())
+
+    def test_invalid_doubts_are_dropped(self) -> None:
+        from study_manager.services.pdf_tools.draft import clean_doubts
+
+        self.assertEqual(
+            clean_doubts([{"text": "  ok  ", "card": 1}, {"text": ""}, "x", {"card": True}]),
+            [{"text": "ok", "card": True}],
+        )
+        self.assertEqual(clean_doubts(None), [])
 
     def test_old_draft_without_block_fields(self) -> None:
         legacy = {key: value for key, value in DOC.items() if key not in {"block_id", "cursor"}}

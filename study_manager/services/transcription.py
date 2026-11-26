@@ -52,18 +52,43 @@ SUPPORTED_VIDEO_EXTENSIONS = {
 }
 
 MODEL_CATALOG: dict[str, dict[str, Any]] = {
+    "tiny-q5_1": {
+        "label": "Tiny (32 MB)",
+        "filename": "ggml-tiny-q5_1.bin",
+        "bytes": 32_152_673,
+        "pros": "Velocissimo, pochissima RAM: utile su PC lenti o per una bozza rapida.",
+        "cons": "Molti errori su termini tecnici, nomi e audio rumoroso.",
+    },
     "base-q5_1": {
-        "label": "Base quantizzato (circa 60 MB)",
+        "label": "Base (60 MB)",
         "filename": "ggml-base-q5_1.bin",
         "bytes": 59_707_625,
+        "pros": "Rapido e leggero, qualità accettabile con audio pulito.",
+        "cons": "Punteggiatura povera e errori frequenti sul lessico specialistico.",
     },
     "small-q5_1": {
-        "label": "Small quantizzato (circa 190 MB)",
+        "label": "Small (190 MB)",
         "filename": "ggml-small-q5_1.bin",
         "bytes": 190_085_487,
+        "pros": "Il miglior compromesso: buona qualità in italiano a velocità ragionevole.",
+        "cons": "Circa 2-3 volte più lento di Base; serve ~1 GB di RAM libera.",
+    },
+    "medium-q5_0": {
+        "label": "Medium (540 MB)",
+        "filename": "ggml-medium-q5_0.bin",
+        "bytes": 539_212_467,
+        "pros": "Qualità alta, gestisce bene termini tecnici e accenti.",
+        "cons": "Lento su CPU (può superare la durata del video); serve ~2 GB di RAM.",
+    },
+    "large-v3-turbo-q5_0": {
+        "label": "Large v3 Turbo (575 MB)",
+        "filename": "ggml-large-v3-turbo-q5_0.bin",
+        "bytes": 574_041_195,
+        "pros": "Qualità massima disponibile, più veloce del Medium a parità di precisione.",
+        "cons": "Download pesante e uso intensivo di CPU/RAM (~2 GB); sconsigliato su portatili lenti.",
     },
 }
-DEFAULT_MODEL = "base-q5_1"
+DEFAULT_MODEL = "small-q5_1"
 DEFAULT_LANGUAGE = "it"
 LANGUAGE_CHOICES: dict[str, str] = {
     "Italiano": "it",
@@ -72,6 +97,66 @@ LANGUAGE_CHOICES: dict[str, str] = {
 }
 LANGUAGE_LABELS = {value: label for label, value in LANGUAGE_CHOICES.items()}
 MODEL_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+
+
+def physical_cores() -> int:
+    try:
+        import psutil
+
+        return int(psutil.cpu_count(logical=False) or os.cpu_count() or 4)
+    except Exception:
+        return os.cpu_count() or 4
+
+
+def total_ram_gb() -> float:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / 2**30
+    except Exception:
+        return 0.0
+
+
+def recommend_model(cores: int, ram_gb: float) -> str:
+    """Modello consigliato per CPU e RAM (whisper.cpp gira solo su CPU).
+
+    shortcut: soglie empiriche su core e RAM, ignora AVX e generazione della CPU;
+    misurare la velocita' reale delle trascrizioni passate se le stime non bastano.
+    """
+    if cores >= 8 and ram_gb >= 15:
+        return "large-v3-turbo-q5_0"
+    if cores >= 6 and ram_gb >= 11:
+        return "medium-q5_0"
+    if cores >= 4 and ram_gb >= 7:
+        return "small-q5_1"
+    if cores >= 2 and ram_gb >= 3.5:
+        return "base-q5_1"
+    return "tiny-q5_1"
+
+
+# Secondi di calcolo per secondo di audio con 4 core fisici (stima iniziale, poi
+# corretta con le misure reali di questo PC salvate al termine di ogni trascrizione).
+BASE_REALTIME_FACTOR = {
+    "tiny-q5_1": 0.04,
+    "base-q5_1": 0.08,
+    "small-q5_1": 0.25,
+    "medium-q5_0": 0.75,
+    "large-v3-turbo-q5_0": 0.65,
+}
+
+
+def estimate_seconds(model: str, duration: float, cores: int, measured: dict[str, float]) -> float:
+    """Durata stimata della trascrizione; ``measured`` = fattori reali gia' osservati per modello."""
+    if model in measured:
+        return measured[model] * duration
+    base = BASE_REALTIME_FACTOR.get(model, 0.25) * (4 / max(1, cores)) ** 0.8
+    # Le misure degli altri modelli dicono quanto questo PC e' piu' lento/veloce della stima.
+    ratios = [
+        value / (BASE_REALTIME_FACTOR[key] * (4 / max(1, cores)) ** 0.8)
+        for key, value in measured.items()
+        if key in BASE_REALTIME_FACTOR and value > 0
+    ]
+    return base * duration * (sum(ratios) / len(ratios) if ratios else 1.0)
 
 
 class TranscriptionError(RuntimeError):
@@ -570,23 +655,18 @@ def _run_whisper(
             "Reinstalla Lectio o le dipendenze del progetto."
         ) from exc
 
-    threads = max(1, min(4, os.cpu_count() or 4))
-    last_report = {"time": 0.0, "percent": 0.0}
+    # whisper.cpp rende meglio con un thread per core fisico (l'hyper-threading non aiuta).
+    threads = max(1, min(8, physical_cores()))
 
     def segment_callback(segment: Any) -> None:
         if _cancel_requested(cancel):
             return
         try:
+            start = max(0.0, float(getattr(segment, "t0", 0)) / 100.0)
             end = max(0.0, float(getattr(segment, "t1", 0)) / 100.0)
+            text = re.sub(r"\s+", " ", str(getattr(segment, "text", "") or "")).strip()
             percent = min(0.995, end / duration_seconds) if duration_seconds > 0 else 0.0
-            current = time.monotonic()
-            if (
-                percent - last_report["percent"] < 0.003
-                and current - last_report["time"] < 0.4
-            ):
-                return
-            last_report["percent"] = percent
-            last_report["time"] = current
+            # Ogni segmento viene inviato: porta il testo per l'anteprima dal vivo.
             emit(
                 "transcribe",
                 percent,
@@ -594,6 +674,7 @@ def _run_whisper(
                 f"{format_clock(duration_seconds)}",
                 end,
                 duration_seconds,
+                f"[{format_timestamp(start)}] {text}" if text else "",
             )
         except Exception:
             LOGGER.exception("Callback di avanzamento whisper non riuscita.")
@@ -677,6 +758,7 @@ def transcribe_media(
         message: str,
         processed_seconds: float = 0.0,
         total_seconds: float = 0.0,
+        text: str = "",
     ) -> None:
         if progress is None:
             return
@@ -688,6 +770,7 @@ def transcribe_media(
                     "message": message,
                     "processed_seconds": max(0.0, float(processed_seconds)),
                     "duration_seconds": max(0.0, float(total_seconds)),
+                    "text": text,
                 }
             )
         except Exception:

@@ -40,7 +40,7 @@ from ..services.pdf_tools.inline import (
     parse_inline,
     preview_color,
 )
-from ..services.pdf_tools.draft import default_draft_path, load_draft, save_draft
+from ..services.pdf_tools.draft import clean_doubts, default_draft_path, load_draft, save_draft
 from ..services.pdf_tools.images import resolve_image
 from ..services.pdf_tools.draft import delete_draft as delete_draft_file
 from ..services.pdf_tools.document import (
@@ -210,6 +210,8 @@ class DocState:
     block_title: str = ""
     # Ultimo contenuto scritto nel database, per non riscriverlo se non cambia.
     synced: tuple = ()
+    # Domande da risolvere prima di farne flashcard: {"text": str, "card": bool}.
+    doubts: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pretty_name(path: Path) -> str:
@@ -246,6 +248,7 @@ class PdfView(ctk.CTkFrame):
         # Immagini delle slide gia' ridimensionate: (file, data modifica, larghezza) -> immagine.
         self._image_cache: dict[tuple[str, float, int], object] = {}
         self._remove_dialog: RemoveTextDialog | None = None
+        self._doubts_dialog = None
         self._preview_numbering: SectionNumbering | None = None
         self._font_tags: set[str] = set()
         self._draft_job: str | None = None
@@ -720,6 +723,9 @@ class PdfView(ctk.CTkFrame):
         self.flashcard_button = self._button(chapter, "＋  Flashcard", self.create_chapter_flashcard)
         self.flashcard_button.configure(height=28, width=110)
         self.flashcard_button.pack(side="left", padx=(6, 0))
+        self.doubts_button = self._button(chapter, "❓  Dubbi", self.open_doubts)
+        self.doubts_button.configure(height=28, width=96)
+        self.doubts_button.pack(side="left", padx=(6, 0))
         modes.grid_columnconfigure(2, weight=0)
         modes.grid_columnconfigure(5, weight=1)
         self.preview_toggle = ctk.CTkSegmentedButton(
@@ -1189,6 +1195,7 @@ class PdfView(ctk.CTkFrame):
             # Il capitolo collegato resta lo stesso: cambia solo il testo.
             state.block_id, state.block_subject = old.block_id, old.block_subject
             state.block_position, state.block_title = old.block_position, old.block_title
+            state.doubts = old.doubts
             if target == self.current:
                 # Il testo nell'editor appartiene al documento sostituito: va scartato.
                 self._cancel_edit_job()
@@ -1353,6 +1360,11 @@ class PdfView(ctk.CTkFrame):
             )
             self.close_block_button.configure(state="normal" if linked and not busy else "disabled")
             self.flashcard_button.configure(state="normal" if doc is not None and not busy else "disabled")
+            pending = sum(1 for doubt in doc.doubts if not doubt.get("card")) if doc is not None else 0
+            self.doubts_button.configure(
+                text=f"❓  Dubbi ({pending})" if pending else "❓  Dubbi",
+                state="normal" if doc is not None else "disabled",
+            )
         if hasattr(self, "close_doc_button"):
             many = len(self.docs) > 1
             self.prev_doc_button.configure(state="normal" if many else "disabled")
@@ -1499,7 +1511,7 @@ class PdfView(ctk.CTkFrame):
     def _block_meta(self, doc: DocState) -> str:
         return json.dumps(
             {"warnings": list(doc.warnings), "engines": dict(doc.engines), "latex": dict(doc.latex),
-             "title": doc.title},
+             "title": doc.title, "doubts": list(doc.doubts)},
             ensure_ascii=False,
         )
 
@@ -1634,6 +1646,7 @@ class PdfView(ctk.CTkFrame):
             latex=dict(meta["latex"]) if isinstance(meta.get("latex"), dict) else {},
             cursor=str(row.get("cursor") or "1.0"),
             page=int(row.get("page") or 0),
+            doubts=clean_doubts(meta.get("doubts")),
         )
         self._apply_block_row(doc, row)
         self._commit_editor()
@@ -1677,12 +1690,24 @@ class PdfView(ctk.CTkFrame):
                 return text
         return ""
 
-    def create_chapter_flashcard(self) -> None:
-        """Nuova flashcard collegata al capitolo aperto (il testo selezionato diventa la domanda)."""
+    def create_chapter_flashcard(self, front: str | None = None, doc: DocState | None = None,
+                                 on_created=None) -> None:
+        """Nuova flashcard collegata al capitolo aperto.
+
+        La domanda e' ``front`` (es. un dubbio) oppure il testo selezionato nell'editor.
+        ``doc`` porta prima in primo piano quel documento; ``on_created(card_id)`` dopo il salvataggio.
+        """
+        if doc is not None:
+            index = next((i for i, item in enumerate(self.docs) if item is doc), None)
+            if index is None:
+                messagebox.showinfo("PDF e Slide", "Il documento di questi dubbi e' stato chiuso.", parent=self)
+                return
+            if index != self.current:
+                self._select_doc(index)
         doc = self._current_doc()
         if doc is None or self.controller.is_running():
             return
-        selection = self._editor_selection()
+        selection = front if front is not None else self._editor_selection()
         if doc.block_id is None:
             if not messagebox.askyesno(
                 "PDF e Slide",
@@ -1706,6 +1731,8 @@ class PdfView(ctk.CTkFrame):
             self.app.sync_flashcard_export(subject)
             self._refresh_subject_pages()
             self._flash_note(f"✓ Flashcard aggiunta al capitolo {chapter}")
+            if on_created is not None:
+                on_created(card_id)
 
         FlashcardDialog(
             self, None,
@@ -1713,6 +1740,27 @@ class PdfView(ctk.CTkFrame):
                      "note_block_id": block_id, "chapter": chapter},
             on_saved=saved,
         )
+
+    def open_doubts(self) -> None:
+        """Finestra dei dubbi del documento aperto (il testo selezionato diventa un nuovo dubbio)."""
+        doc = self._current_doc()
+        if doc is None:
+            return
+        self._commit_editor()
+        from .doubts_dialog import DoubtsDialog
+
+        dialog = self._doubts_dialog
+        if dialog is not None and dialog.winfo_exists():
+            if dialog.doc is doc:
+                dialog.lift()
+                dialog.focus_set()
+                return
+            dialog.destroy()
+        self._doubts_dialog = DoubtsDialog(self, doc, initial=" ".join(self._editor_selection().split()))
+
+    def doubts_changed(self, doc: DocState) -> None:
+        self._update_buttons()
+        self._schedule_draft_save()
 
     def _current_doc(self) -> DocState | None:
         return self.docs[self.current] if 0 <= self.current < len(self.docs) else None
@@ -3646,6 +3694,7 @@ class PdfView(ctk.CTkFrame):
                 "latex": dict(doc.latex),
                 "block_id": doc.block_id,
                 "cursor": doc.cursor,
+                "doubts": list(doc.doubts),
             }
             for doc in self.docs
         ]
@@ -3711,6 +3760,7 @@ class PdfView(ctk.CTkFrame):
                 error=raw["error"],
                 latex=dict(raw.get("latex") or {}),
                 cursor=str(raw.get("cursor") or "1.0"),
+                doubts=clean_doubts(raw.get("doubts")),
             )
             for raw in data["docs"]
         ]

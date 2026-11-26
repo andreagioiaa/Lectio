@@ -25,7 +25,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "audio_track": "",
     "audio_volume": "0.55",
     "audio_loop": "1",
-    "transcription_model": "base-q5_1",
+    "transcription_model": "small-q5_1",
     "transcription_language": "it",
     # Google Calendar (sincronizzazione bidirezionale)
     "google_sync_past_days": "180",

@@ -23,8 +23,19 @@ DRAFT_VERSION = 1
 DRAFT_FILENAME = "pdf_draft.json"
 
 _DOC_FIELDS = (
-    "path", "title", "source", "fmt", "warnings", "engines", "error", "latex", "block_id", "cursor",
+    "path", "title", "source", "fmt", "warnings", "engines", "error", "latex", "block_id", "cursor", "doubts",
 )
+
+
+def clean_doubts(raw: Any) -> list[dict[str, Any]]:
+    """Dubbi letti da bozza o capitolo: solo voci ``{"text": str, "card": bool}`` valide."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        {"text": str(item["text"]).strip(), "card": bool(item.get("card"))}
+        for item in raw
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
 
 
 def default_draft_path() -> Path:
@@ -48,6 +59,7 @@ def _clean_doc(raw: Any) -> dict[str, Any] | None:
         # Capitolo di appunti collegato (id nel database) e posizione del cursore.
         "block_id": int(raw["block_id"]) if isinstance(raw.get("block_id"), int) and raw["block_id"] > 0 else None,
         "cursor": str(raw.get("cursor") or "1.0"),
+        "doubts": clean_doubts(raw.get("doubts")),
     }
 
 

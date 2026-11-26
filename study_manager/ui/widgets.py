@@ -49,10 +49,11 @@ class StatCard(Card):
         title: str,
         value: str = "-",
         subtitle: str = "",
-        accent: str = COLORS.accent,
+        accent: str | None = None,
         **kwargs,
     ):
         super().__init__(master, **kwargs)
+        accent = accent or COLORS.accent
         self._accent = accent
         self.grid_columnconfigure(0, weight=1)
         self._bar = ctk.CTkFrame(self, width=42, height=4, fg_color=accent, corner_radius=2)
@@ -119,9 +120,10 @@ class TimerRing(tk.Canvas):
         progress: float,
         main_text: str,
         sub_text: str,
-        color: str = COLORS.accent,
+        color: str | None = None,
         force: bool = False,
     ) -> None:
+        color = color or COLORS.accent
         signature = (round(progress, 3), main_text, sub_text, color)
         if not force and signature == self._last_signature:
             return

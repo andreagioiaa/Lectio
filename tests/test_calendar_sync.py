@@ -238,7 +238,7 @@ class MigrationTests(unittest.TestCase):
             try:
                 conn = db._connection()
                 self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 7)
+                self.assertGreaterEqual(SCHEMA_VERSION, 7)
                 columns = {row["name"] for row in conn.execute("PRAGMA table_info(calendar_events)")}
                 for column in ("source", "google_event_id", "google_calendar_id", "color_hex"):
                     self.assertIn(column, columns)

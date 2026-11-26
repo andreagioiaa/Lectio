@@ -34,10 +34,20 @@ from .blocker_view import BlockerView
 from .calendar_view import CalendarView
 from .flashcard_view import FlashcardView
 from .pdf_view import PdfView
+from .text_shortcuts import install_text_shortcuts
 from .pomodoro_view import PomodoroView
 from .settings_view import SettingsView
 from .subjects_view import SubjectsView
-from .theme import configure_theme, font
+from .theme import (
+    THEME_DARK,
+    THEME_LIGHT,
+    apply_palette,
+    color_map,
+    configure_theme,
+    current_theme,
+    font,
+    recolor_widget_tree,
+)
 from .video_view import VideoView
 from .widgets import render_state, set_window_icon
 
@@ -49,6 +59,7 @@ class StudyFlowApp(ctk.CTk):
     def __init__(self):
         configure_theme()
         super().__init__()
+        install_text_shortcuts(self)
         self.paths = ensure_data_layout()
         self.logger = logging.getLogger("studyflow.app")
         self.db = Database(self.paths["db"])
@@ -91,6 +102,13 @@ class StudyFlowApp(ctk.CTk):
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
         self._ui_queue: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
         self.views: dict[str, Any] = {}
+        self._hosts_warned = False
+        # Tema salvato: la palette va scelta prima di creare i widget.
+        try:
+            saved_theme = self.db.get_setting("ui_theme", THEME_DARK)
+        except Exception:
+            saved_theme = THEME_DARK
+        apply_palette(THEME_LIGHT if saved_theme == THEME_LIGHT else THEME_DARK)
 
         self.title(APP_TITLE)
         self.configure(fg_color=COLORS.bg)
@@ -109,6 +127,10 @@ class StudyFlowApp(ctk.CTk):
         self._build_content()
         self._build_toast()
         self._setup_signals()
+        if current_theme() == THEME_LIGHT:
+            # i widget sono nati con la palette chiara: restano da convertire solo
+            # i pochi colori scritti direttamente nelle viste
+            recolor_widget_tree(self, color_map(THEME_DARK, THEME_LIGHT, literals_only=True))
 
         self._prefill_views(exclude="pomodoro")
         self.show_view("pomodoro")
@@ -157,7 +179,7 @@ class StudyFlowApp(ctk.CTk):
     )
 
     def _build_sidebar(self) -> None:
-        """Barra di navigazione in alto: marchio, sezioni affiancate e stato del blocco.
+        """Barra di navigazione in alto: marchio, sezioni affiancate e cambio tema.
 
         Se la finestra e' stretta le etichette si accorciano e, al limite,
         restano solo le icone (vedi ``_layout_nav``).
@@ -197,23 +219,23 @@ class StudyFlowApp(ctk.CTk):
             button.grid(row=0, column=column, padx=1)
             self._nav_buttons[key] = button
 
-        status_card = ctk.CTkFrame(
-            bar, fg_color=COLORS.surface, corner_radius=10, border_width=1, border_color=COLORS.border,
+        # Cambio tema: il simbolo mostra il tema in cui si passera' (sole = chiaro).
+        self.theme_button = ctk.CTkButton(
+            bar,
+            text="",
+            width=40,
+            height=36,
+            font=font(18),
+            fg_color=COLORS.surface,
+            hover_color=COLORS.surface_hover,
+            text_color=COLORS.amber,
+            border_width=1,
+            border_color=COLORS.border,
+            corner_radius=10,
+            command=self.toggle_theme,
         )
-        status_card.grid(row=0, column=2, sticky="e", padx=(10, 14), pady=8)
-        self.status_dot = ctk.CTkLabel(status_card, text="●", font=font(11), text_color=COLORS.text_faint, width=14)
-        self.status_dot.grid(row=0, column=0, rowspan=2, padx=(10, 2))
-        self.status_title = ctk.CTkLabel(
-            status_card, text="Blocco inattivo", font=font(10, "bold"), text_color=COLORS.text_muted, anchor="w",
-            height=16,
-        )
-        self.status_title.grid(row=0, column=1, sticky="w", padx=(2, 10), pady=(4, 0))
-        self.status_detail = ctk.CTkLabel(
-            status_card, text="Si attiva con il Pomodoro", font=font(9), text_color=COLORS.text_faint, anchor="w",
-            height=14,
-        )
-        self.status_detail.grid(row=1, column=1, sticky="w", padx=(2, 10), pady=(0, 4))
-        self.status_card = status_card
+        self.theme_button.grid(row=0, column=2, sticky="e", padx=(10, 14), pady=8)
+        self._update_theme_button()
 
         bar.bind("<Configure>", lambda _e: self._schedule_nav_layout())
         self.after(50, self._layout_nav)
@@ -244,7 +266,7 @@ class StudyFlowApp(ctk.CTk):
             available = self.topbar.winfo_width()
             if available <= 1:
                 return
-            fixed = self.topbar.grid_slaves(row=0, column=0)[0].winfo_reqwidth() + self.status_card.winfo_reqwidth() + 58
+            fixed = self.topbar.grid_slaves(row=0, column=0)[0].winfo_reqwidth() + self.theme_button.winfo_reqwidth() + 58
             for mode in ("full", "short", "icons"):
                 texts = self._nav_texts(mode)
                 for key, button in self._nav_buttons.items():
@@ -256,6 +278,50 @@ class StudyFlowApp(ctk.CTk):
                     break
         except tk.TclError:
             pass
+
+    # ------------------------------------------------------------------ tema
+    def _update_theme_button(self) -> None:
+        light = current_theme() == THEME_LIGHT
+        # in tema chiaro si mostra la luna (si torna allo scuro), in tema scuro il sole
+        self.theme_button.configure(
+            text="☾" if light else "☀",
+            text_color=COLORS.purple if light else COLORS.amber,
+        )
+
+    def toggle_theme(self) -> None:
+        """Passa dal tema scuro al chiaro (e viceversa) senza riavviare l'app."""
+        target = THEME_DARK if current_theme() == THEME_LIGHT else THEME_LIGHT
+        started = time.perf_counter()
+        try:
+            self.configure(cursor="watch")
+            self.update_idletasks()
+        except tk.TclError:
+            pass
+        mapping = apply_palette(target)
+        recolor_widget_tree(self, mapping)
+        self.configure(fg_color=COLORS.bg)
+        self._update_theme_button()
+        for view in self.views.values():
+            hook = getattr(view, "on_theme_changed", None)
+            if hook is None:
+                continue
+            try:
+                hook()
+            except Exception:
+                self.logger.exception("Aggiornamento del tema non riuscito per una vista.")
+        for button in self._nav_buttons.values():
+            button._studyflow_colors = None  # i colori della voce attiva vanno ricalcolati
+        try:
+            self.db.set_setting("ui_theme", target)
+        except Exception:
+            self.logger.exception("Salvataggio del tema non riuscito.")
+        try:
+            self.configure(cursor="")
+        except tk.TclError:
+            pass
+        self.logger.info(
+            "Tema %s applicato in %.0f ms.", target, (time.perf_counter() - started) * 1000
+        )
 
     def _build_content(self) -> None:
         self.content = ctk.CTkFrame(self, fg_color=COLORS.bg, corner_radius=0)
@@ -752,27 +818,13 @@ class StudyFlowApp(ctk.CTk):
             result = snapshot.get("last_result")
             if isinstance(result, dict):
                 self.on_session_finished(result)
-            if status["hosts_residual"]:
-                dot, title = COLORS.amber, "Hosts da ripristinare"
-                detail = "Usa Blocco distrazioni > Ripristina file hosts."
-            elif status["active"]:
-                dot = COLORS.green
-                title = f"Blocco attivo · {status['attempts']} tentativi"
-                sites = (
-                    "siti on"
-                    if status["site_state"] == "active"
-                    else "siti in avvio"
-                    if status["site_state"] == "starting"
-                    else "siti non attivi"
-                )
-                apps = "app on" if status["apps_enabled"] else "app off"
-                detail = f"{sites} · {apps}"
-            else:
-                dot, title = COLORS.text_faint, "Blocco inattivo"
-                detail = "Si attiva con il Pomodoro"
-            self.status_dot.configure(text_color=dot)
-            self.status_title.configure(text=title)
-            self.status_detail.configure(text=detail)
+            # Lo stato del blocco non e' piu' nella barra in alto: resta solo
+            # l'avviso, una volta, se il file hosts va ripristinato.
+            if status["hosts_residual"] and not self._hosts_warned:
+                self._hosts_warned = True
+                self.toast("File hosts da ripristinare: Blocco distrazioni > Ripristina file hosts.")
+            elif not status["hosts_residual"]:
+                self._hosts_warned = False
         except Exception:
             self.logger.exception("Errore nel polling globale.")
         self._poll_job = self.after(1000, self._global_poll)

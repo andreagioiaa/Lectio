@@ -17,6 +17,7 @@ from ..config import COLORS
 from ..services.subject_folders import (
     FLASHCARD_EXPORT_NAME,
     KIND_FLASHCARDS,
+    KIND_NOTES,
     KIND_TRANSCRIPTS,
     SUBFOLDERS,
 )
@@ -177,3 +178,71 @@ class FlashcardsSection(_SectionBase):
         if export is not None:
             self.button(footer, "Apri CSV", 76,
                         lambda path=str(export): _open_path(self, path, "CSV")).pack(side="right")
+
+
+class NoteBlocksSection(_SectionBase):
+    """Capitoli di appunti creati in PDF e Slide, in ordine crescente di numero."""
+
+    def __init__(self, master, app, subject: str, blocks: list[dict[str, Any]], on_change=None):
+        super().__init__(master, app, subject, "APPUNTI · CAPITOLI")
+        self.on_change = on_change
+        self.button(self.header_actions, "Cartella", 80,
+                    lambda: self.app.open_subject_folder(self.subject, KIND_NOTES)).pack(side="left", padx=(0, 6))
+        self.button(self.header_actions, "+  Da PDF e Slide", 130,
+                    lambda: self.app.open_in_view("pdf", subject=self.subject), primary=True).pack(side="left")
+        cards = sum(int(block.get("flashcards") or 0) for block in blocks)
+        self.count_label.configure(
+            text=f"{len(blocks)} capitoli · {cards} flashcard collegate" if blocks else "Nessun capitolo di appunti"
+        )
+        if not blocks:
+            self.empty("Nessun capitolo per questa materia. In PDF e Slide estrai un PDF e premi "
+                       "«Collega a materia»: il documento diventa un capitolo numerato di questa pagina.")
+            return
+        for index, block in enumerate(blocks):
+            self._block_row(block, index)
+
+    def _block_row(self, block: dict[str, Any], row: int) -> None:
+        card = self.row_card(row)
+        ctk.CTkLabel(card, text=f"{int(block.get('position') or 0)}. {block.get('title') or 'Capitolo'}",
+                     font=font(13, "bold"), text_color=COLORS.text, anchor="w", wraplength=380,
+                     justify="left").grid(row=0, column=0, sticky="w", padx=14, pady=(10, 1))
+        is_open = str(block.get("status") or "") == "open"
+        meta = ["Aperto in PDF e Slide" if is_open else "Chiuso"]
+        page = int(block.get("page") or 0)
+        if page:
+            meta.append(f"ultima slide {page + 1}")
+        flashcards = int(block.get("flashcards") or 0)
+        meta.append(f"{flashcards} flashcard" if flashcards else "nessuna flashcard")
+        pdf = str(block.get("pdf_path") or "")
+        if pdf:
+            meta.append(Path(pdf).name + ("" if Path(pdf).is_file() else " (PDF non trovato)"))
+        ctk.CTkLabel(card, text="  ·  ".join(meta), font=font(9),
+                     text_color=COLORS.accent if is_open else COLORS.text_faint, anchor="w",
+                     wraplength=420, justify="left").grid(row=1, column=0, sticky="w", padx=14)
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 10))
+        block_id = int(block["id"])
+        self.button(actions, "Apri in PDF e Slide", 140,
+                    lambda: self.app.open_in_view("pdf", block_id=block_id), primary=True).pack(
+            side="left", padx=(0, 4))
+        if flashcards:
+            self.button(actions, "Flashcard", 84,
+                        lambda: self.app.open_in_view("flashcards", subject=self.subject)).pack(side="left", padx=4)
+        self.button(actions, "Elimina", 70, lambda: self._delete(block)).pack(side="right")
+
+    def _delete(self, block: dict[str, Any]) -> None:
+        label = f"{int(block.get('position') or 0)}. {block.get('title') or ''}"
+        if not messagebox.askyesno(
+            "Elimina capitolo",
+            f"Eliminare il capitolo «{label}» e il suo testo?\n\nLe flashcard collegate restano nella materia "
+            "(senza capitolo). Il PDF originale e i file esportati non vengono toccati.",
+            icon="warning", parent=self.winfo_toplevel(),
+        ):
+            return
+        pdf_view = getattr(self.app, "views", {}).get("pdf")
+        if pdf_view is not None and hasattr(pdf_view, "forget_block"):
+            pdf_view.forget_block(int(block["id"]))
+        self.db.delete_note_block(int(block["id"]))
+        self.app.toast(f"Capitolo «{label}» eliminato")
+        if self.on_change is not None:
+            self.on_change()

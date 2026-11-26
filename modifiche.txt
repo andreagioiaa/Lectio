@@ -1,0 +1,1 @@
+i file salvati in "PDF e Slide" quando collegati a una materia devono risultare come "Appunti" all'interno della materia collegata.

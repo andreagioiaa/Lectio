@@ -33,6 +33,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "google_auto_create_calendar": "0",
     "google_enabled_calendars": "[]",
     "ical_feeds": "[]",
+    "ui_theme": "dark",
 }
 
 # Impostazioni con segreti OAuth: cifrate con DPAPI, mai esportate nel backup
@@ -105,6 +106,32 @@ class Palette:
     purple: str = "#A78BFA"
     chart_grid: str = "#26364F"
 
+
+# Palette di riferimento dei due temi. ``COLORS`` e' l'istanza usata dalle viste:
+# ``ui.theme.apply_palette`` ne aggiorna i campi quando si cambia tema, cosi'
+# i widget creati dopo il cambio usano gia' i colori giusti.
+DARK_PALETTE = Palette()
+LIGHT_PALETTE = Palette(
+    bg="#EEF2F7",
+    sidebar="#FEFEFE",
+    surface="#FBFCFE",
+    surface_alt="#F1F5F9",
+    surface_hover="#E3E9F1",
+    border="#CDD6E2",
+    text="#0F172A",
+    text_muted="#475569",
+    text_faint="#64748B",
+    accent="#0D9488",
+    accent_hover="#0F766E",
+    accent_dark="#9FE7D6",
+    blue="#0284C7",
+    amber="#B45309",
+    red="#DC2626",
+    red_dark="#FECACA",
+    green="#16A34A",
+    purple="#7C3AED",
+    chart_grid="#E5EAF1",
+)
 
 COLORS = Palette()
 

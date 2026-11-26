@@ -27,7 +27,7 @@ from .utils import (
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Origine di un evento del calendario. Gli stati ``google_pending_*`` formano
 # la coda offline verso Google Calendar; ``google_pending_delete`` e' un
@@ -96,6 +96,7 @@ DATA_TABLES: tuple[str, ...] = (
     "material_notes",
     "distraction_attempts",
     "video_lessons",
+    "note_blocks",
     "flashcards",
     "flashcard_reviews",
     "doubts",
@@ -108,6 +109,7 @@ _RESTORE_DELETE_ORDER: tuple[str, ...] = (
     "material_notes",
     "flashcard_reviews",
     "flashcards",
+    "note_blocks",
     "materials",
     "distraction_attempts",
     "sessions",
@@ -127,6 +129,7 @@ _RESTORE_INSERT_ORDER: tuple[str, ...] = (
     "material_notes",
     "distraction_attempts",
     "video_lessons",
+    "note_blocks",
     "flashcards",
     "flashcard_reviews",
     "doubts",
@@ -209,7 +212,26 @@ CREATE TABLE IF NOT EXISTS flashcards (
     learning_step INTEGER NOT NULL DEFAULT 0,
     last_reviewed_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    note_block_id INTEGER REFERENCES note_blocks(id) ON DELETE SET NULL
+);
+
+-- Blocchi di appunti (capitoli) del modulo PDF e Slide collegati a una materia.
+CREATE TABLE IF NOT EXISTS note_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL,
+    pdf_path TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    fmt TEXT NOT NULL DEFAULT 'markdown',
+    meta TEXT NOT NULL DEFAULT '{}',
+    page INTEGER NOT NULL DEFAULT 0,
+    cursor TEXT NOT NULL DEFAULT '1.0',
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS flashcard_reviews (
@@ -314,6 +336,7 @@ CREATE INDEX IF NOT EXISTS idx_flashcards_due ON flashcards(due_at);
 CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_card ON flashcard_reviews(card_id);
 CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_date ON flashcard_reviews(reviewed_at);
 CREATE INDEX IF NOT EXISTS idx_subjects_exam ON subjects(exam_date);
+CREATE INDEX IF NOT EXISTS idx_note_blocks_subject ON note_blocks(subject, position);
 """
 
 
@@ -392,6 +415,23 @@ class Database:
                         f"ALTER TABLE calendar_events ADD COLUMN {column} {definition}"
                     )
         self._migrate_v7_google(connection)
+        self._migrate_v8_note_blocks(connection)
+
+    @staticmethod
+    def _migrate_v8_note_blocks(connection: sqlite3.Connection) -> None:
+        """Schema v8: flashcard collegate a un blocco di appunti (capitolo)."""
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(flashcards)").fetchall()
+        }
+        if columns and "note_block_id" not in columns:
+            connection.execute(
+                "ALTER TABLE flashcards ADD COLUMN note_block_id INTEGER "
+                "REFERENCES note_blocks(id) ON DELETE SET NULL"
+            )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_flashcards_block ON flashcards(note_block_id)"
+        )
 
     @staticmethod
     def _migrate_v7_google(connection: sqlite3.Connection) -> None:
@@ -1086,6 +1126,7 @@ class Database:
         front: str,
         back: str,
         notes: str = "",
+        note_block_id: int | None = None,
     ) -> int:
         question = front.strip()
         answer = back.strip()
@@ -1095,8 +1136,8 @@ class Database:
         cursor = self._connection().execute(
             "INSERT INTO flashcards(subject, front, back, notes, state, due_at, "
             "interval_days, ease_factor, repetitions, lapses, learning_step, "
-            "last_reviewed_at, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'new', ?, 0, ?, 0, 0, 0, '', ?, ?)",
+            "last_reviewed_at, created_at, updated_at, note_block_id) "
+            "VALUES (?, ?, ?, ?, 'new', ?, 0, ?, 0, 0, 0, '', ?, ?, ?)",
             (
                 subject.strip()[:150],
                 question[:8000],
@@ -1106,6 +1147,7 @@ class Database:
                 DEFAULT_EASE_FACTOR,
                 timestamp,
                 timestamp,
+                int(note_block_id) if note_block_id else None,
             ),
         )
         return int(cursor.lastrowid)
@@ -1153,9 +1195,13 @@ class Database:
         state: str | None = None,
         due_only: bool = False,
         limit: int | None = None,
+        note_block_id: int | None = None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
+        if note_block_id is not None:
+            clauses.append("note_block_id = ?")
+            params.append(int(note_block_id))
         if subject is not None and subject.strip():
             clauses.append("LOWER(subject) = LOWER(?)")
             params.append(subject.strip())
@@ -1337,7 +1383,7 @@ class Database:
                     "DELETE FROM sqlite_sequence WHERE name IN "
                     "('sessions', 'distraction_attempts', 'materials', 'material_notes', "
                     "'video_lessons', 'calendar_events', 'blocked_sites', 'blocked_apps', "
-                    "'flashcards', 'flashcard_reviews', 'doubts')"
+                    "'flashcards', 'flashcard_reviews', 'doubts', 'note_blocks')"
                 )
             except sqlite3.Error:
                 pass
@@ -1371,6 +1417,136 @@ class Database:
             connection.execute("ROLLBACK")
             raise
 
+    # ------------------------------------------------------------ note blocks
+    _NOTE_BLOCK_FIELDS = ("title", "pdf_path", "source", "fmt", "meta", "page", "cursor")
+
+    def next_note_block_position(self, subject: str) -> int:
+        row = self._connection().execute(
+            "SELECT COALESCE(MAX(position), 0) AS top FROM note_blocks "
+            "WHERE LOWER(subject) = LOWER(?)",
+            (str(subject or "").strip(),),
+        ).fetchone()
+        return safe_int(row["top"] if row else 0) + 1
+
+    def add_note_block(
+        self,
+        subject: str,
+        title: str,
+        position: int | None = None,
+        pdf_path: str = "",
+        source: str = "",
+        fmt: str = "markdown",
+        meta: str = "{}",
+        page: int = 0,
+        cursor: str = "1.0",
+    ) -> int:
+        clean_subject = str(subject or "").strip()[:150]
+        clean_title = str(title or "").strip()[:300]
+        if not clean_subject:
+            raise ValueError("Scegli la materia a cui collegare gli appunti.")
+        if not clean_title:
+            raise ValueError("Il titolo del capitolo e' obbligatorio.")
+        if position is None or safe_int(position) <= 0:
+            position = self.next_note_block_position(clean_subject)
+        timestamp = now_str()
+        cursor_row = self._connection().execute(
+            "INSERT INTO note_blocks(subject, position, title, pdf_path, source, fmt, meta, "
+            "page, cursor, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+            (
+                clean_subject,
+                safe_int(position),
+                clean_title,
+                str(pdf_path or ""),
+                str(source or ""),
+                str(fmt or "markdown"),
+                str(meta or "{}"),
+                max(0, safe_int(page)),
+                str(cursor or "1.0"),
+                timestamp,
+                timestamp,
+            ),
+        )
+        return int(cursor_row.lastrowid)
+
+    def update_note_block(self, block_id: int, **values: Any) -> None:
+        """Aggiorna contenuto/posizione di un blocco. ``status`` = 'open' | 'closed'."""
+        sets: list[str] = []
+        params: list[Any] = []
+        for key in self._NOTE_BLOCK_FIELDS:
+            if key in values:
+                value = values[key]
+                if key == "page":
+                    value = max(0, safe_int(value))
+                elif key == "title":
+                    value = str(value or "").strip()[:300]
+                    if not value:
+                        raise ValueError("Il titolo del capitolo e' obbligatorio.")
+                else:
+                    value = str(value if value is not None else "")
+                sets.append(f"{key} = ?")
+                params.append(value)
+        if "subject" in values:
+            subject = str(values["subject"] or "").strip()[:150]
+            if not subject:
+                raise ValueError("Scegli la materia a cui collegare gli appunti.")
+            sets.append("subject = ?")
+            params.append(subject)
+            # Le flashcard del capitolo seguono la materia.
+            self._connection().execute(
+                "UPDATE flashcards SET subject = ? WHERE note_block_id = ?",
+                (subject, int(block_id)),
+            )
+        if "position" in values:
+            sets.append("position = ?")
+            params.append(max(1, safe_int(values["position"])))
+        if "status" in values:
+            status = "closed" if values["status"] == "closed" else "open"
+            sets.append("status = ?")
+            params.append(status)
+            sets.append("closed_at = ?")
+            params.append(now_str() if status == "closed" else "")
+        if not sets:
+            return
+        sets.append("updated_at = ?")
+        params.append(now_str())
+        params.append(int(block_id))
+        self._connection().execute(
+            f"UPDATE note_blocks SET {', '.join(sets)} WHERE id = ?", tuple(params)
+        )
+
+    def get_note_block(self, block_id: int) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            "SELECT * FROM note_blocks WHERE id = ?", (int(block_id),)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_note_blocks(self, subject: str | None = None) -> list[dict[str, Any]]:
+        """Blocchi in ordine crescente di numero di capitolo, con il conteggio delle flashcard."""
+        sql = (
+            "SELECT b.id, b.subject, b.position, b.title, b.pdf_path, b.fmt, b.page, b.cursor, "
+            "b.status, b.created_at, b.updated_at, b.closed_at, LENGTH(b.source) AS source_length, "
+            "(SELECT COUNT(*) FROM flashcards f WHERE f.note_block_id = b.id) AS flashcards "
+            "FROM note_blocks b"
+        )
+        params: tuple[Any, ...] = ()
+        if subject is not None:
+            sql += " WHERE LOWER(b.subject) = LOWER(?)"
+            params = (str(subject).strip(),)
+        sql += " ORDER BY LOWER(b.subject), b.position ASC, LOWER(b.title), b.id ASC"
+        return [dict(row) for row in self._connection().execute(sql, params).fetchall()]
+
+    def note_block_labels(self) -> dict[int, str]:
+        """``{id: "1. Introduzione"}`` per mostrare il capitolo accanto alle flashcard."""
+        rows = self._connection().execute(
+            "SELECT id, position, title FROM note_blocks"
+        ).fetchall()
+        return {int(row["id"]): f"{int(row['position'])}. {row['title']}" for row in rows}
+
+    def delete_note_block(self, block_id: int) -> None:
+        """Elimina il blocco; le sue flashcard restano nella materia, senza capitolo."""
+        self._connection().execute("DELETE FROM note_blocks WHERE id = ?", (int(block_id),))
+
     # ---------------------------------------------------------------- subjects
     def list_subjects(self, search: str = "") -> list[dict[str, Any]]:
         """Elenca le materie esplicite e quelle ricavate dai dati collegati.
@@ -1390,6 +1566,7 @@ class Database:
             "UNION SELECT subject FROM sessions WHERE TRIM(subject) <> '' "
             "UNION SELECT subject FROM video_lessons WHERE TRIM(subject) <> '' "
             "UNION SELECT subject FROM flashcards WHERE TRIM(subject) <> '' "
+            "UNION SELECT subject FROM note_blocks WHERE TRIM(subject) <> '' "
             "UNION SELECT subject FROM doubts WHERE TRIM(subject) <> ''"
             ") "
             "SELECT n.name, COALESCE(s.id, 0) AS subject_id, "
@@ -1406,6 +1583,8 @@ class Database:
             "WHERE LOWER(m.subject) = LOWER(n.name)) AS materials, "
             "(SELECT COUNT(*) FROM video_lessons v "
             "WHERE LOWER(v.subject) = LOWER(n.name)) AS videos, "
+            "(SELECT COUNT(*) FROM note_blocks nb "
+            "WHERE LOWER(nb.subject) = LOWER(n.name)) AS note_blocks, "
             "(SELECT COUNT(*) FROM flashcards f "
             "WHERE LOWER(f.subject) = LOWER(n.name)) AS flashcards, "
             "(SELECT COUNT(*) FROM flashcards f "
@@ -1428,6 +1607,7 @@ class Database:
         count_keys = (
             "materials",
             "videos",
+            "note_blocks",
             "flashcards",
             "due_flashcards",
             "events",
@@ -1560,6 +1740,7 @@ class Database:
                     "flashcards",
                     "calendar_events",
                     "doubts",
+                    "note_blocks",
                 ):
                     connection.execute(
                         f"UPDATE {table} SET subject = ? "
@@ -1619,7 +1800,7 @@ class Database:
             raise ValueError("Materia non trovata.")
         linked = sum(
             safe_int(subject.get(key, 0))
-            for key in ("materials", "videos", "flashcards", "events", "sessions")
+            for key in ("materials", "videos", "note_blocks", "flashcards", "events", "sessions")
         )
         if linked:
             raise ValueError(

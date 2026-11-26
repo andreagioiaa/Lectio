@@ -248,6 +248,10 @@ class AnalyticsView(ctk.CTkFrame):
         self.refresh()
         self.after(50, self._init_matplotlib)
 
+    def on_theme_changed(self) -> None:
+        """I grafici Matplotlib leggono i colori al disegno: vanno ridisegnati."""
+        self._draw_charts()
+
     def refresh_if_visible(self) -> None:
         if self.app.is_view_visible(self):
             self.refresh()

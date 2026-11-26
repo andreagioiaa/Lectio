@@ -12,6 +12,13 @@ marcatori di slide e formule LaTeX::
     - punto elenco
       - punto annidato
     1. elenco numerato
+    a) elenco con le lettere
+
+    ```python
+    print("blocco di codice")
+    ```
+
+    Riga spezzata // a capo senza nuovo paragrafo.
 
     $$
     \\int_{0}^{1} x \\, dx = \\frac{1}{2}
@@ -34,14 +41,20 @@ BLOCK_BULLET = "bullet"
 BLOCK_NUMBER = "number"
 BLOCK_MATH = "math"
 BLOCK_TABLE = "table"
+BLOCK_LETTER = "letter"
+BLOCK_CODE = "code"
 
-LIST_KINDS = (BLOCK_BULLET, BLOCK_NUMBER)
+LIST_KINDS = (BLOCK_BULLET, BLOCK_NUMBER, BLOCK_LETTER)
 MAX_LIST_LEVEL = 3
 
 SLIDE_MARKER_RE = re.compile(r"^\s*=+\s*SLIDE\s+(\d+)\s*=+\s*$", re.IGNORECASE)
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 BULLET_RE = re.compile(r"^(\s*)[-*+•]\s+(.*)$")
 NUMBER_RE = re.compile(r"^(\s*)(\d{1,3})[.)]\s+(.*)$")
+# Solo la forma ``a)``: ``a.``/``e.`` a inizio riga sono troppo comuni nel testo normale.
+LETTER_RE = re.compile(r"^(\s*)([a-z])\)\s+(.*)$")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})\s*([\w+#.-]*)\s*$")
+LATEX_SLIDE_MARKER_RE = re.compile(r"^\s*%\s*=+\s*Slide\s+\d+\s*=+\s*$", re.IGNORECASE)
 TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -54,12 +67,15 @@ class Block:
     ``text`` contiene testo Markdown con formule inline ``$...$``; per i
     blocchi ``math`` contiene solo il codice LaTeX, senza delimitatori.
     ``level`` e' il livello del titolo (1-3) o la profondita' dell'elenco (0-3).
+    Per i blocchi ``code`` ``text`` e' il codice cosi' com'e' e ``language``
+    l'eventuale linguaggio indicato dopo le ``` di apertura.
     """
 
     kind: str
     text: str
     level: int = 0
     number: int | None = None
+    language: str = ""
 
 
 @dataclass
@@ -67,6 +83,9 @@ class Slide:
     number: int
     blocks: list[Block] = field(default_factory=list)
     engine: str = ""
+    # False se il testo non contiene marcatori ``=== SLIDE N ===``: in quel caso
+    # gli esportatori non devono inventarne uno.
+    marked: bool = True
 
     @property
     def title(self) -> str:
@@ -191,6 +210,63 @@ def slide_marker(number: int) -> str:
     return f"=== SLIDE {number} ==="
 
 
+def letter_label(number: int | None) -> str:
+    """1 -> ``a``, 26 -> ``z``, 27 -> ``aa``."""
+    value = max(1, int(number or 1))
+    out = ""
+    while value:
+        value, rest = divmod(value - 1, 26)
+        out = chr(ord("a") + rest) + out
+    return out
+
+
+def letter_number(label: str) -> int:
+    value = 0
+    for char in label.lower():
+        value = value * 26 + (ord(char) - ord("a") + 1)
+    return max(1, value)
+
+
+def show_marker(slide: "Slide", options: "RenderOptions") -> bool:
+    """True se per la slide va scritto il marcatore/numero."""
+    return bool(options.include_markers and slide.number and slide.marked)
+
+
+def strip_slide_markers(text: str) -> tuple[str, int]:
+    """Toglie i marcatori ``=== SLIDE N ===`` (e ``% === Slide N ===`` del LaTeX).
+
+    Restituisce (testo, marcatori rimossi). Le righe vuote multiple lasciate dai
+    marcatori vengono compattate; i blocchi di codice non vengono toccati.
+    """
+    out: list[str] = []
+    removed = 0
+    fence: str | None = None
+    for line in text.replace("\r\n", "\n").split("\n"):
+        fence_match = FENCE_RE.match(line)
+        if fence_match:
+            marker = fence_match.group(1)
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence) and not fence_match.group(2):
+                fence = None
+            out.append(line)
+            continue
+        if fence is None and (SLIDE_MARKER_RE.match(line) or LATEX_SLIDE_MARKER_RE.match(line)):
+            removed += 1
+            continue
+        if fence is None and line.strip() == "_(slide senza testo)_":
+            continue
+        out.append(line)
+    result = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip("\n")
+    return (result + "\n" if result else ""), removed
+
+
+def code_fence(code: str) -> str:
+    """Delimitatore ``` abbastanza lungo da non comparire nel codice."""
+    longest = max((len(run) for run in re.findall(r"`{3,}", code)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def render_blocks(blocks: list[Block]) -> list[str]:
     """Blocchi -> righe Markdown (senza marcatore di slide)."""
     lines: list[str] = []
@@ -199,6 +275,8 @@ def render_blocks(blocks: list[Block]) -> list[str]:
         text = block.text.strip()
         if not text:
             continue
+        if block.kind == BLOCK_CODE:
+            text = block.text
         is_list = block.kind in LIST_KINDS
         if lines and not (is_list and previous_kind in LIST_KINDS):
             lines.append("")
@@ -209,6 +287,11 @@ def render_blocks(blocks: list[Block]) -> list[str]:
         elif block.kind == BLOCK_NUMBER:
             number = block.number if block.number is not None else 1
             lines.append(f"{'  ' * _level(block)}{number}. {text}")
+        elif block.kind == BLOCK_LETTER:
+            lines.append(f"{'  ' * _level(block)}{letter_label(block.number)}) {text}")
+        elif block.kind == BLOCK_CODE:
+            fence = code_fence(block.text)
+            lines.extend([f"{fence}{block.language}", block.text.rstrip("\n"), fence])
         elif block.kind == BLOCK_MATH:
             lines.extend(["$$", text, "$$"])
         elif block.kind == BLOCK_TABLE:
@@ -251,6 +334,9 @@ def parse_markdown(text: str) -> list[Slide]:
     table: list[str] = []
     math_lines: list[str] | None = None
     math_close = "$$"
+    code_lines: list[str] | None = None
+    code_fence_marker = ""
+    code_language = ""
     list_item: Block | None = None
     list_indent = 0
 
@@ -274,6 +360,17 @@ def parse_markdown(text: str) -> list[Slide]:
 
     for raw_line in text.split("\n"):
         line = raw_line.rstrip()
+        if code_lines is not None:
+            closing = FENCE_RE.match(line)
+            if (
+                closing and not closing.group(2) and closing.group(1)[0] == code_fence_marker[0]
+                and len(closing.group(1)) >= len(code_fence_marker)
+            ):
+                current.blocks.append(Block(BLOCK_CODE, "\n".join(code_lines), language=code_language))
+                code_lines = None
+            else:
+                code_lines.append(line)
+            continue
         if math_lines is not None:
             stripped = line.strip()
             if stripped.endswith(math_close):
@@ -293,6 +390,14 @@ def parse_markdown(text: str) -> list[Slide]:
                 slides.append(current)
             current = Slide(number=int(marker.group(1)))
             has_marker = True
+            continue
+
+        fence = FENCE_RE.match(line)
+        if fence:
+            flush_all()
+            code_lines = []
+            code_fence_marker = fence.group(1)
+            code_language = fence.group(2)
             continue
 
         stripped = line.strip()
@@ -337,6 +442,7 @@ def parse_markdown(text: str) -> list[Slide]:
 
         bullet = BULLET_RE.match(line)
         number = NUMBER_RE.match(line)
+        letter = LETTER_RE.match(line)
         if bullet and not stripped.startswith("**"):
             flush_paragraph()
             flush_table()
@@ -358,6 +464,19 @@ def parse_markdown(text: str) -> list[Slide]:
             list_indent = indent
             current.blocks.append(list_item)
             continue
+        if letter:
+            flush_paragraph()
+            flush_table()
+            indent = len(letter.group(1).expandtabs(4))
+            list_item = Block(
+                BLOCK_LETTER,
+                letter.group(3).strip(),
+                level=_indent_level(indent),
+                number=letter_number(letter.group(2)),
+            )
+            list_indent = indent
+            current.blocks.append(list_item)
+            continue
 
         if list_item is not None and len(line) - len(line.lstrip()) > list_indent:
             list_item.text = join_lines([list_item.text, stripped])
@@ -368,11 +487,14 @@ def parse_markdown(text: str) -> list[Slide]:
 
     if math_lines is not None:
         current.blocks.append(Block(BLOCK_MATH, "\n".join(math_lines).strip()))
+    if code_lines is not None:  # blocco di codice non chiuso: arriva fino alla fine
+        current.blocks.append(Block(BLOCK_CODE, "\n".join(code_lines), language=code_language))
     flush_all()
     if has_marker:
         slides.append(current)
     elif current.blocks:
         current.number = 1
+        current.marked = False
         slides.append(current)
     return [slide for slide in slides if slide.blocks or slide.number]
 

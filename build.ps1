@@ -9,7 +9,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+# Tutto l'output finisce anche in build.log, cosi' resta leggibile dopo la chiusura.
+$logFile = Join-Path $PSScriptRoot "build.log"
+try { Start-Transcript -Path $logFile -Force | Out-Null } catch { }
+
 try {
+    Write-Host "Log completo: $logFile" -ForegroundColor DarkGray
+    Write-Host "PowerShell $($PSVersionTable.PSVersion) - cartella: $PSScriptRoot" -ForegroundColor DarkGray
     $venvPath = Join-Path $PSScriptRoot ".venv"
     $venvPython = Join-Path $venvPath "Scripts\python.exe"
 
@@ -91,8 +97,11 @@ catch {
     Write-Host "=== BUILD FALLITA ===" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host $_.InvocationInfo.PositionMessage -ForegroundColor DarkRed
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
 }
 finally {
+    try { Stop-Transcript | Out-Null } catch { }
     Write-Host ""
+    Write-Host "Log salvato in: $logFile" -ForegroundColor DarkGray
     Read-Host "Premi INVIO per chiudere la finestra"
 }

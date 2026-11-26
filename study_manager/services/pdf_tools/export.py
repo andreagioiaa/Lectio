@@ -33,6 +33,7 @@ from .inline import (
     STYLE_ITALIC,
     STYLE_MONO,
     STYLE_UNDERLINE,
+    LineBreak,
     Math,
     Node,
     parse_inline,
@@ -42,14 +43,19 @@ from .inline import (
 )
 from .document import (
     BLOCK_BULLET,
+    BLOCK_CODE,
     BLOCK_HEADING,
+    BLOCK_LETTER,
     BLOCK_MATH,
     BLOCK_NUMBER,
     BLOCK_TABLE,
     LIST_KINDS,
     RenderOptions,
     Slide,
+    code_fence,
+    letter_label,
     parse_markdown,
+    show_marker,
     split_inline_math,
     unescape_text,
 )
@@ -131,6 +137,8 @@ def _nodes_to_latex(nodes: list[Node]) -> str:
             out.append(latex_escape(unescape_text(node)))
         elif isinstance(node, Math):
             out.append(f"${node.content}$")
+        elif isinstance(node, LineBreak):
+            out.append("\\\\ ")
         elif node.style == STYLE_COLOR:
             model = f"[{node.model}]" if node.model else ""
             out.append(f"\\textcolor{model}{{{node.value}}}{{{_nodes_to_latex(node.children)}}}")
@@ -155,6 +163,22 @@ def _table_rows(text: str) -> list[list[str]]:
 
 def _list_env(kind: str) -> str:
     return "itemize" if kind == BLOCK_BULLET else "enumerate"
+
+
+_ENUM_COUNTERS = ("enumi", "enumii", "enumiii", "enumiv")
+LETTER_LABEL_RE = re.compile(r"^\\renewcommand\{?\\labelenum(i{1,3}|iv)\}?\{\\alph\{enum[iv]+\}\)?\}")
+
+
+def letter_label_command(depth: int) -> str:
+    """Etichette a), b), c)... per un ``enumerate`` (LaTeX standard, senza pacchetti)."""
+    counter = _ENUM_COUNTERS[min(3, depth)]
+    return f"\\renewcommand{{\\label{counter}}}{{\\alph{{{counter}}})}}"
+
+
+def code_block_latex(code: str) -> list[str]:
+    """Blocco di codice in ``verbatim`` (nessun pacchetto aggiuntivo)."""
+    body = code.rstrip("\n").replace("\\end{verbatim}", "\\end {verbatim}")
+    return ["\\begin{verbatim}", *body.split("\n"), "\\end{verbatim}"]
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +327,7 @@ def slides_to_latex_body(slides: list[Slide], options: RenderOptions) -> str:
     for slide_index, slide in enumerate(slides):
         if slide_index:
             lines.append("")
-        if options.include_markers and slide.number:
+        if show_marker(slide, options):
             lines.append(f"% === Slide {slide.number} ===")
         stack: list[tuple[str, int]] = []
 
@@ -322,8 +346,10 @@ def slides_to_latex_body(slides: list[Slide], options: RenderOptions) -> str:
                 if not stack or stack[-1][1] < level:
                     depth = len(stack)
                     lines.append(f"{'  ' * depth}\\begin{{{_list_env(block.kind)}}}")
-                    if block.kind == BLOCK_NUMBER and block.number and block.number > 1:
-                        counter = ("enumi", "enumii", "enumiii", "enumiv")[min(3, depth)]
+                    if block.kind == BLOCK_LETTER:
+                        lines.append(f"{'  ' * depth}  {letter_label_command(depth)}")
+                    if block.kind != BLOCK_BULLET and block.number and block.number > 1:
+                        counter = _ENUM_COUNTERS[min(3, depth)]
                         lines.append(f"{'  ' * depth}  \\setcounter{{{counter}}}{{{block.number - 1}}}")
                     stack.append((block.kind, level))
                 lines.append(f"{'  ' * len(stack)}\\item {inline_to_latex(block.text)}")
@@ -334,6 +360,8 @@ def slides_to_latex_body(slides: list[Slide], options: RenderOptions) -> str:
                     continue
                 command = heading_command(min(block.level, 3), options)
                 lines.append(f"\\{command}{{{inline_to_latex(block.text)}}}")
+            elif block.kind == BLOCK_CODE:
+                lines.extend(code_block_latex(block.text))
             elif block.kind == BLOCK_MATH:
                 formula = block.text.strip()
                 if "\\\\" in formula and "\\begin" not in formula:
@@ -506,10 +534,13 @@ def _latex_text_to_markdown(text: str) -> str:
             segment = re.sub(r"\\textbf\{([^{}]*)\}", r"**\1**", segment)
             segment = re.sub(r"\\(?:emph|textit)\{([^{}]*)\}", r"*\1*", segment)
             segment = re.sub(r"\\(?:textrm|textsf|mbox|text)\{([^{}]*)\}", r"\1", segment)
+        # a capo forzato: \\ (con eventuale [spazio]) -> // del sorgente
+        segment = re.sub(r"(?<!\\)\\\\(\[[^\]]*\])?\s*$", " //", segment)
+        segment = re.sub(r"(?<!\\)\\\\(\[[^\]]*\])?\s*", " // ", segment)
+        segment = re.sub(r"\\newline\b\s*", " // ", segment)
         segment = segment.replace("\\$", "\x00")
         for source, target in _LATEX_UNESCAPE:
             segment = segment.replace(source, target)
-        segment = re.sub(r"\\\\(\[[^\]]*\])?\s*$", "", segment)
         segment = segment.replace("~", " ").replace("``", "“").replace("''", "”")
         parts.append(segment.replace("\x00", "\\$"))
     return "".join(parts).strip()
@@ -528,8 +559,24 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
     math_wrap: str | None = None
     math_lines: list[str] = []
     table_rows: list[str] | None = None
+    code_end: str | None = None
+    code_lines: list[str] = []
 
     for raw in text.split("\n"):
+        if code_end is not None:
+            if raw.strip().startswith(code_end):
+                fence = code_fence("\n".join(code_lines))
+                out.extend(["", fence, *code_lines, fence, ""])
+                code_end = None
+                code_lines = []
+            else:
+                code_lines.append(raw.rstrip())
+            continue
+        code_env = re.match(r"^\s*\\begin\{(verbatim|lstlisting|minted)\}(?:\[[^\]]*\])?(?:\{[^}]*\})?\s*$", raw)
+        if code_env:
+            code_end = f"\\end{{{code_env.group(1)}}}"
+            code_lines = []
+            continue
         marker = re.match(r"^\s*%\s*=+\s*Slide\s+(\d+)\s*=+\s*$", raw, re.IGNORECASE)
         if marker:
             out.extend(["", f"=== SLIDE {marker.group(1)} ===", ""])
@@ -595,6 +642,9 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
         if re.match(r"^\\begin\{(itemize|enumerate)\}", line):
             stack.append(["bullet" if "itemize" in line else "number", 0])
             continue
+        if LETTER_LABEL_RE.match(line) and stack:
+            stack[-1][0] = "letter"
+            continue
         if re.match(r"^\\end\{(itemize|enumerate)\}", line):
             if stack:
                 stack.pop()
@@ -611,6 +661,9 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
             kind = stack[-1]
             if kind[0] == "bullet":
                 out.append(f"{'  ' * depth}- {_latex_text_to_markdown(item.group(1))}")
+            elif kind[0] == "letter":
+                kind[1] += 1
+                out.append(f"{'  ' * depth}{letter_label(kind[1])}) {_latex_text_to_markdown(item.group(1))}")
             else:
                 kind[1] += 1
                 out.append(f"{'  ' * depth}{kind[1]}. {_latex_text_to_markdown(item.group(1))}")
@@ -629,6 +682,9 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
             out[-1] = f"{out[-1]} {converted}"
         else:
             out.append(converted)
+    if code_end is not None and code_lines:
+        fence = code_fence("\n".join(code_lines))
+        out.extend(["", fence, *code_lines, fence, ""])
     markdown = "\n".join(out)
     markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip()
     return markdown + "\n"
@@ -637,15 +693,17 @@ def latex_to_markdown(tex: str, options: RenderOptions | None = None) -> str:
 # ---------------------------------------------------------------------------
 # Testo semplice
 # ---------------------------------------------------------------------------
-def _inline_to_plain(text: str) -> str:
-    return re.sub(r"[ ]{2,}", " ", plain_text(parse_inline(text), latex_to_unicode)).strip()
+def _inline_to_plain(text: str, indent: str = "") -> str:
+    plain = re.sub(r"[ ]{2,}", " ", plain_text(parse_inline(text), latex_to_unicode)).strip()
+    # le righe dopo un a capo // restano allineate al testo dell'elenco
+    return plain.replace("\n", "\n" + indent) if indent else plain
 
 
 def slides_to_txt(slides: list[Slide], options: RenderOptions) -> str:
     chunks: list[str] = []
     for slide in slides:
         lines: list[str] = []
-        if options.include_markers and slide.number:
+        if show_marker(slide, options):
             lines.extend([f"=== SLIDE {slide.number} ===", ""])
         previous_list = False
         for block in slide.blocks:
@@ -657,9 +715,16 @@ def slides_to_txt(slides: list[Slide], options: RenderOptions) -> str:
                     continue
                 lines.append(_inline_to_plain(block.text))
             elif block.kind == BLOCK_BULLET:
-                lines.append(f"{'  ' * block.level}- {_inline_to_plain(block.text)}")
+                prefix = f"{'  ' * block.level}- "
+                lines.append(prefix + _inline_to_plain(block.text, " " * len(prefix)))
             elif block.kind == BLOCK_NUMBER:
-                lines.append(f"{'  ' * block.level}{block.number or 1}. {_inline_to_plain(block.text)}")
+                prefix = f"{'  ' * block.level}{block.number or 1}. "
+                lines.append(prefix + _inline_to_plain(block.text, " " * len(prefix)))
+            elif block.kind == BLOCK_LETTER:
+                prefix = f"{'  ' * block.level}{letter_label(block.number)}) "
+                lines.append(prefix + _inline_to_plain(block.text, " " * len(prefix)))
+            elif block.kind == BLOCK_CODE:
+                lines.extend(f"    {code_line}" if code_line else "" for code_line in block.text.split("\n"))
             elif block.kind == BLOCK_MATH:
                 for formula_line in block.text.split("\\\\"):
                     lines.append(f"    {latex_to_unicode(formula_line)}")
@@ -698,6 +763,8 @@ def _nodes_to_pandoc(nodes: list[Node]) -> str:
         elif isinstance(node, Math):
             if node.content.strip():
                 out.append(f"${node.content.strip()}$")
+        elif isinstance(node, LineBreak):
+            out.append("\\\n")
         elif node.style == STYLE_BOLD:
             out.append(f"**{_nodes_to_pandoc(node.children)}**")
         elif node.style == STYLE_ITALIC:
@@ -726,7 +793,7 @@ def slides_to_pandoc_markdown(slides: list[Slide], options: RenderOptions) -> st
     for index, slide in enumerate(slides):
         if index and options.docx_page_breaks:
             out.extend([PAGE_BREAK_OPENXML, ""])
-        if options.include_markers and slide.number:
+        if show_marker(slide, options):
             out.extend(['::: {custom-style="Slide Marker"}', f"Slide {slide.number}", ":::", ""])
         previous_list = False
         for block in slide.blocks:
@@ -740,6 +807,11 @@ def slides_to_pandoc_markdown(slides: list[Slide], options: RenderOptions) -> st
                 out.append(f"{'    ' * block.level}- {_pandoc_inline(block.text)}")
             elif block.kind == BLOCK_NUMBER:
                 out.append(f"{'    ' * block.level}{block.number or 1}. {_pandoc_inline(block.text)}")
+            elif block.kind == BLOCK_LETTER:
+                out.append(f"{'    ' * block.level}{letter_label(block.number)}) {_pandoc_inline(block.text)}")
+            elif block.kind == BLOCK_CODE:
+                fence = code_fence(block.text)
+                out.extend(["", f"{fence}{block.language}", block.text.rstrip("\n"), fence, ""])
             elif block.kind == BLOCK_MATH:
                 formula = block.text.strip()
                 if "\\\\" in formula and "\\begin" not in formula:
@@ -904,6 +976,8 @@ def _nodes_to_html(nodes: list[Node]) -> str:
             out.append(escaped.replace("$", '<span class="dollar">$</span>'))
         elif isinstance(node, Math):
             out.append(f"${html.escape(node.content, quote=False)}$")
+        elif isinstance(node, LineBreak):
+            out.append("<br>")
         elif node.style == STYLE_COLOR:
             color = (f"#{node.value}" if node.model.upper() == "HTML" else preview_color(node.value)) or "inherit"
             out.append(f'<span style="color:{html.escape(color)}">{_nodes_to_html(node.children)}</span>')
@@ -925,7 +999,7 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
     body: list[str] = []
     for slide in slides:
         body.append('<section class="slide">')
-        if options.include_markers and slide.number:
+        if show_marker(slide, options):
             body.append(f'<div class="marker">Slide {slide.number}</div>')
         stack: list[tuple[str, int]] = []
 
@@ -940,6 +1014,8 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
                 if not stack or stack[-1][1] < block.level:
                     if block.kind == BLOCK_BULLET:
                         body.append("<ul>")
+                    elif block.kind == BLOCK_LETTER:
+                        body.append(f'<ol type="a" start="{block.number or 1}">')
                     else:
                         body.append(f'<ol start="{block.number or 1}">')
                     stack.append((block.kind, block.level))
@@ -952,6 +1028,8 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
                     body.append(f"<h{level}>{_html_inline(block.text)}</h{level}>")
             elif block.kind == BLOCK_MATH:
                 body.append(f'<div class="display">$${html.escape(block.text, quote=False)}$$</div>')
+            elif block.kind == BLOCK_CODE:
+                body.append(f'<pre class="code"><code>{html.escape(block.text, quote=False)}</code></pre>')
             elif block.kind == BLOCK_TABLE:
                 rows = _table_rows(block.text)
                 body.append("<table>")
@@ -992,6 +1070,8 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
   h1, h2, h3 {{ margin: 8px 0 10px; }}
   h1 {{ font-size: 24px; }} h2 {{ font-size: 19px; color: #CBD5E1; }} h3 {{ font-size: 16px; }}
   .display {{ overflow-x: auto; margin: 10px 0; }}
+  pre.code {{ background: #0B1120; border: 1px solid #24344F; border-radius: 8px; padding: 10px 14px;
+             overflow-x: auto; font-family: Consolas, monospace; font-size: 13px; }}
   table {{ border-collapse: collapse; margin: 10px 0; }}
   td, th {{ border: 1px solid #24344F; padding: 4px 10px; }}
   @media print {{ body {{ background: #fff; color: #000; }} .slide {{ background: #fff; border-color: #ccc; }} }}

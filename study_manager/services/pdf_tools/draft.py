@@ -22,7 +22,9 @@ LOGGER = logging.getLogger(__name__)
 DRAFT_VERSION = 1
 DRAFT_FILENAME = "pdf_draft.json"
 
-_DOC_FIELDS = ("path", "title", "source", "fmt", "warnings", "engines", "error", "latex")
+_DOC_FIELDS = (
+    "path", "title", "source", "fmt", "warnings", "engines", "error", "latex", "block_id", "cursor",
+)
 
 
 def default_draft_path() -> Path:
@@ -43,6 +45,9 @@ def _clean_doc(raw: Any) -> dict[str, Any] | None:
         "engines": {str(k): int(v) for k, v in raw.get("engines", {}).items()} if isinstance(raw.get("engines"), dict) else {},
         "error": str(raw.get("error", "")),
         "latex": dict(raw["latex"]) if isinstance(raw.get("latex"), dict) else {},
+        # Capitolo di appunti collegato (id nel database) e posizione del cursore.
+        "block_id": int(raw["block_id"]) if isinstance(raw.get("block_id"), int) and raw["block_id"] > 0 else None,
+        "cursor": str(raw.get("cursor") or "1.0"),
     }
 
 

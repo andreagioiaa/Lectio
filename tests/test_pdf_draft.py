@@ -19,6 +19,8 @@ DOC = {
     "engines": {"pymupdf": 3},
     "error": "",
     "latex": {"numbered": True, "embed": True, "base_level": "section", "root_title": "Lezione 1"},
+    "block_id": 7,
+    "cursor": "12.4",
 }
 
 
@@ -41,6 +43,14 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(data["sources"], ["C:/slide/lezione1.pdf"])
         self.assertAlmostEqual(data["saved_at"], saved_at)
         self.assertFalse(self.path.with_name("pdf_draft.json.tmp").exists())
+
+    def test_old_draft_without_block_fields(self) -> None:
+        legacy = {key: value for key, value in DOC.items() if key not in {"block_id", "cursor"}}
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps({"docs": [legacy]}), encoding="utf-8")
+        data = load_draft(self.path)
+        self.assertIsNone(data["docs"][0]["block_id"])
+        self.assertEqual(data["docs"][0]["cursor"], "1.0")
 
     def test_missing_or_corrupt(self) -> None:
         self.assertIsNone(load_draft(self.path))

@@ -24,7 +24,7 @@ from ..services.spaced_repetition import (
     preview_schedule,
     state_label,
 )
-from .theme import font
+from .theme import font, register_color_dict
 from .widgets import (
     Card,
     PageHeader,
@@ -47,12 +47,12 @@ STATE_FILTERS = (
     "Ripasso",
 )
 
-STATE_COLORS = {
+STATE_COLORS = register_color_dict({
     "new": COLORS.blue,
     "learning": COLORS.amber,
     "review": COLORS.accent,
     "relearning": COLORS.purple,
-}
+})
 
 
 class FlashcardView(ctk.CTkFrame):
@@ -63,6 +63,7 @@ class FlashcardView(ctk.CTkFrame):
         self._filter_subject = ALL_SUBJECTS
         self._search_job: str | None = None
         self._cards: list[dict[str, Any]] = []
+        self._chapter_labels: dict[int, str] = {}
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -247,6 +248,10 @@ class FlashcardView(ctk.CTkFrame):
             self._study_due()
 
     def refresh(self) -> None:
+        try:
+            self._chapter_labels = self.db.note_block_labels()
+        except Exception:
+            self._chapter_labels = {}
         subjects = self.db.list_subject_tags()
         values = [ALL_SUBJECTS, *subjects]
         self.subject_filter.configure(values=values)
@@ -336,6 +341,9 @@ class FlashcardView(ctk.CTkFrame):
             justify="left",
         ).grid(row=0, column=0, sticky="w")
         subject = str(card.get("subject") or "Senza materia")
+        chapter = self._chapter_labels.get(int(card.get("note_block_id") or 0), "")
+        if chapter:
+            subject = f"{subject} · Cap. {chapter}"
         ctk.CTkLabel(
             top,
             text=subject,
@@ -508,12 +516,28 @@ class FlashcardView(ctk.CTkFrame):
 
 
 class FlashcardDialog(ctk.CTkToplevel):
-    def __init__(self, view: FlashcardView, card: dict[str, Any] | None):
+    """Crea o modifica una flashcard.
+
+    ``prefill`` (solo nuove schede) puo' contenere ``subject``, ``front``,
+    ``notes``, ``note_block_id`` e ``chapter`` (etichetta del capitolo di
+    appunti a cui la scheda viene collegata). ``on_saved(card_id)`` sostituisce
+    il refresh della vista Flashcard quando il dialogo e' aperto altrove.
+    """
+
+    def __init__(
+        self,
+        view,
+        card: dict[str, Any] | None,
+        prefill: dict[str, Any] | None = None,
+        on_saved=None,
+    ):
         super().__init__(view.winfo_toplevel())
         self.view = view
         self.app = view.app
         self.db = view.db
         self.card = card
+        self.prefill = dict(prefill or {}) if card is None else {}
+        self.on_saved = on_saved
         self.title("Modifica flashcard" if card else "Nuova flashcard")
         self.configure(fg_color=COLORS.bg)
         self.resizable(False, False)
@@ -536,7 +560,11 @@ class FlashcardDialog(ctk.CTkToplevel):
         ).grid(row=0, column=0, sticky="w", padx=28, pady=(22, 2))
         ctk.CTkLabel(
             self,
-            text="La scheda viene ripassata con intervalli calcolati in base ai tuoi giudizi.",
+            text=(
+                f"Collegata al capitolo {self.prefill['chapter']}: la ritrovi anche nella sua materia."
+                if self.prefill.get("chapter")
+                else "La scheda viene ripassata con intervalli calcolati in base ai tuoi giudizi."
+            ),
             font=font(11),
             text_color=COLORS.text_muted,
             anchor="w",
@@ -613,6 +641,14 @@ class FlashcardDialog(ctk.CTkToplevel):
             command=self._save,
         ).grid(row=0, column=1, sticky="e")
 
+        if self.prefill:
+            self.subject_combo.set(str(self.prefill.get("subject") or ""))
+            if self.prefill.get("note_block_id"):
+                self.subject_combo.configure(state="disabled")
+            if str(self.prefill.get("front") or "").strip():
+                self._set_text(self.front_box, str(self.prefill["front"]))
+            if str(self.prefill.get("notes") or "").strip():
+                self._set_text(self.notes_box, str(self.prefill["notes"]))
         if self.card:
             self.subject_combo.set(str(self.card.get("subject") or ""))
             self._set_text(self.front_box, str(self.card.get("front") or ""))
@@ -695,8 +731,12 @@ class FlashcardDialog(ctk.CTkToplevel):
                 self.db.update_flashcard(
                     int(self.card["id"]), subject, front, back, notes
                 )
+                card_id = int(self.card["id"])
             else:
-                self.db.add_flashcard(subject, front, back, notes)
+                card_id = self.db.add_flashcard(
+                    subject, front, back, notes,
+                    note_block_id=self.prefill.get("note_block_id"),
+                )
         except Exception as exc:
             self.app.logger.exception("Salvataggio flashcard non riuscito.")
             messagebox.showerror("Salvataggio non riuscito", str(exc), parent=self)
@@ -704,7 +744,10 @@ class FlashcardDialog(ctk.CTkToplevel):
         previous_subject = str(self.card.get("subject") or "") if self.card else ""
         self.app.sync_flashcard_export(subject, previous_subject)
         self._close()
-        self.view.refresh()
+        if self.on_saved is not None:
+            self.on_saved(card_id)
+        else:
+            self.view.refresh()
         self.app.toast("Flashcard salvata.")
 
     def _close(self) -> None:

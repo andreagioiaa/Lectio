@@ -260,6 +260,7 @@ def backup_summary(counts: dict[str, Any]) -> str:
         "video_lessons": "videolezioni",
         "calendar_events": "eventi",
         "subjects": "materie",
+        "note_blocks": "capitoli di appunti",
         "flashcards": "flashcard",
         "flashcard_reviews": "ripassi",
         "blocked_sites": "siti bloccati",

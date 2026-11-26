@@ -17,6 +17,7 @@ import customtkinter as ctk
 from ..config import COLORS
 from ..utils import format_hours, safe_float
 from .formatting import format_event_datetime
+from .pdf_viewer import is_pdf, open_pdf_window
 from .theme import font
 from .widgets import Card, center_window, clear_children, set_window_icon
 
@@ -282,6 +283,10 @@ class MaterialsSection(Card):
                 parent=self.winfo_toplevel(),
             )
             return
+        if is_pdf(path):
+            # I PDF si aprono nel visualizzatore integrato (slide divise una per volta).
+            if open_pdf_window(self, self.app, path) is not None:
+                return
         try:
             os.startfile(str(path))  # type: ignore[attr-defined]
         except (OSError, AttributeError) as exc:

@@ -8,6 +8,10 @@ comandi LaTeX piu' usati negli appunti:
 - ``\\textcolor{red}{testo}``  testo colorato (pacchetto xcolor)
 - ``\\textbf{}``, ``\\emph{}``/``\\textit{}`` come alternativa a ``**``/``*``
 
+``//`` (oppure ``\\\\``) manda a capo senza iniziare un nuovo paragrafo: in
+LaTeX diventa ``\\\\``, in Word un'interruzione di riga. Non vale dentro le
+formule, dentro ``\\texttt{}`` e dopo ``:`` (``https://``).
+
 I comandi si possono annidare (``\\textcolor{blue}{\\underline{x}}``) e possono
 contenere formule ``$...$``. ``parse_inline`` produce un piccolo albero che
 ogni esportatore (LaTeX, TXT, Word, HTML, anteprima) visita a modo suo.
@@ -36,6 +40,9 @@ _COMMANDS = {
     "textcolor": STYLE_COLOR,
 }
 _COMMAND_RE = re.compile(r"\\(underline|texttt|textbf|textit|emph|textcolor)\s*(?=[\[{])")
+# A capo forzato: ``//`` (non in ``://`` ne' in ``///``) oppure ``\\`` come in LaTeX.
+BREAK_RE = re.compile(r"[ \t]*(?:(?<![:/\\])//(?!/)|(?<!\\)\\\\(?![\\$]))[ \t]*")
+LINE_BREAK_SOURCE = " // "
 _EMPHASIS_RE = re.compile(r"(\*\*[^*]+?\*\*|(?<![\w*])\*(?!\s)[^*]+?(?<!\s)\*(?![\w*]))")
 
 # Colori proposti nel menu (nomi validi di xcolor) e resa nell'anteprima scura.
@@ -81,7 +88,12 @@ class Styled:
     model: str = ""          # modello opzionale, es. "HTML" in \textcolor[HTML]{FF0000}
 
 
-Node = Union[str, Math, Styled]
+@dataclass
+class LineBreak:
+    """A capo forzato dentro un paragrafo (``//`` nel sorgente)."""
+
+
+Node = Union[str, Math, Styled, LineBreak]
 
 
 def _read_group(text: str, start: int, open_char: str = "{", close_char: str = "}") -> tuple[str, int] | None:
@@ -130,8 +142,23 @@ def _match_command(text: str, index: int) -> tuple[Styled, str, int] | None:
     return Styled(_COMMANDS[name], value=color, model=model), content, end
 
 
-def _plain_nodes(text: str) -> list[Node]:
-    """Testo senza comandi: formule e grassetto/corsivo Markdown."""
+def _split_breaks(text: str, breaks: bool) -> list[Node]:
+    if not breaks or ("//" not in text and "\\\\" not in text):
+        return [text] if text else []
+    nodes: list[Node] = []
+    position = 0
+    for match in BREAK_RE.finditer(text):
+        if match.start() > position:
+            nodes.append(text[position:match.start()])
+        nodes.append(LineBreak())
+        position = match.end()
+    if position < len(text):
+        nodes.append(text[position:])
+    return nodes
+
+
+def _plain_nodes(text: str, breaks: bool = True) -> list[Node]:
+    """Testo senza comandi: formule, grassetto/corsivo Markdown e a capo ``//``."""
     nodes: list[Node] = []
     for is_math, content in split_inline_math(text):
         if is_math:
@@ -141,11 +168,11 @@ def _plain_nodes(text: str) -> list[Node]:
             if not token:
                 continue
             if token.startswith("**") and token.endswith("**") and len(token) > 4:
-                nodes.append(Styled(STYLE_BOLD, parse_inline(token[2:-2])))
+                nodes.append(Styled(STYLE_BOLD, parse_inline(token[2:-2], breaks)))
             elif token.startswith("*") and token.endswith("*") and len(token) > 2:
-                nodes.append(Styled(STYLE_ITALIC, parse_inline(token[1:-1])))
+                nodes.append(Styled(STYLE_ITALIC, parse_inline(token[1:-1], breaks)))
             else:
-                nodes.append(token)
+                nodes.extend(_split_breaks(token, breaks))
     return nodes
 
 
@@ -171,7 +198,8 @@ def _math_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def parse_inline(text: str) -> list[Node]:
+def parse_inline(text: str, breaks: bool = True) -> list[Node]:
+    """Albero della formattazione in linea; ``breaks=False`` ignora gli a capo ``//``."""
     nodes: list[Node] = []
     buffer_start = 0
     index = 0
@@ -188,8 +216,8 @@ def parse_inline(text: str) -> list[Node]:
             if matched is not None:
                 node, content, end = matched
                 if buffer_start < index:
-                    nodes.extend(_plain_nodes(text[buffer_start:index]))
-                node.children = parse_inline(content)
+                    nodes.extend(_plain_nodes(text[buffer_start:index], breaks))
+                node.children = parse_inline(content, breaks and node.style != STYLE_MONO)
                 nodes.append(node)
                 index = buffer_start = end
                 continue
@@ -197,12 +225,14 @@ def parse_inline(text: str) -> list[Node]:
             continue
         index += 1
     if buffer_start < len(text):
-        nodes.extend(_plain_nodes(text[buffer_start:]))
+        nodes.extend(_plain_nodes(text[buffer_start:], breaks))
     return nodes
 
 
 def iter_runs(nodes: list[Node], styles: tuple = ()) -> Iterator[tuple[str, str, tuple]]:
-    """Appiattisce l'albero in ``(tipo, contenuto, stili)``; tipo ``text`` o ``math``.
+    """Appiattisce l'albero in ``(tipo, contenuto, stili)``; tipo ``text``, ``math`` o ``break``.
+
+    Per ``break`` il contenuto e' ``"\\n"``.
 
     ``stili`` e' una tupla di (stile, valore), es. (("bold", ""), ("color", "red")).
     """
@@ -211,6 +241,8 @@ def iter_runs(nodes: list[Node], styles: tuple = ()) -> Iterator[tuple[str, str,
             yield "text", node, styles
         elif isinstance(node, Math):
             yield "math", node.content, styles
+        elif isinstance(node, LineBreak):
+            yield "break", "\n", styles
         else:
             yield from iter_runs(node.children, styles + ((node.style, node.value),))
 

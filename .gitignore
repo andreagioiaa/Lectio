@@ -27,3 +27,5 @@ ffmpeg.exe
 .idea/
 Thumbs.db
 desktop.ini
+
+build.log

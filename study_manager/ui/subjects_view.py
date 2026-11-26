@@ -23,8 +23,8 @@ from ..services.subjects import (
 from ..utils import format_hours
 from ..services.subject_folders import KIND_NOTES
 from .materials import ORPHAN_SUBJECT, ORPHAN_SUBJECT_KEY, MaterialsSection
-from .subject_content import FlashcardsSection, VideosSection
-from .theme import font
+from .subject_content import FlashcardsSection, NoteBlocksSection, VideosSection
+from .theme import font, register_color_dict
 from .widgets import (
     Card,
     PageHeader,
@@ -38,12 +38,12 @@ from .widgets import (
 
 LAST_SUBJECT_SETTING = "subjects_last_selected"
 
-COUNTDOWN_COLORS = {
+COUNTDOWN_COLORS = register_color_dict({
     "undefined": COLORS.text_muted,
     "upcoming": COLORS.accent,
     "today": COLORS.amber,
     "past": COLORS.red,
-}
+})
 
 
 class SubjectsView(ctk.CTkFrame):
@@ -346,6 +346,7 @@ class SubjectsView(ctk.CTkFrame):
                 self.db.list_video_lessons(selected),
                 self.db.list_flashcards(subject=selected),
                 self.db.flashcard_stats(selected),
+                self.db.list_note_blocks(selected),
             )
         else:
             detail_data = None
@@ -366,6 +367,7 @@ class SubjectsView(ctk.CTkFrame):
             return
         self._detail_header(subject)
         self._detail_countdown(subject)
+        self._detail_note_blocks(subject, detail_data[5])
         self._detail_materials(subject)
         self._detail_videos(subject, detail_data[2])
         self._detail_flashcards(subject, detail_data[3], detail_data[4])
@@ -668,7 +670,7 @@ class SubjectsView(ctk.CTkFrame):
         study_hours = study_minutes / 60.0
         percent = min(100, int(round(study_hours / hours * 100))) if hours else 0
         stats = ctk.CTkFrame(self.detail_scroll, fg_color="transparent")
-        stats.grid(row=5, column=0, sticky="ew", pady=(0, 12))
+        stats.grid(row=6, column=0, sticky="ew", pady=(0, 12))
         for column in range(2):
             stats.grid_columnconfigure(column, weight=1, uniform="subject_stats")
 
@@ -714,23 +716,28 @@ class SubjectsView(ctk.CTkFrame):
             str(subject.get("name") or ""),
             on_change=self.refresh,
         )
-        section.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        section.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+
+    def _detail_note_blocks(self, subject: dict[str, Any], blocks: list[dict[str, Any]]) -> None:
+        NoteBlocksSection(
+            self.detail_scroll, self.app, str(subject.get("name") or ""), blocks, on_change=self.refresh
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
 
     def _detail_videos(self, subject: dict[str, Any], lessons: list[dict[str, Any]]) -> None:
         VideosSection(self.detail_scroll, self.app, str(subject.get("name") or ""), lessons).grid(
-            row=3, column=0, sticky="ew", pady=(0, 12)
+            row=4, column=0, sticky="ew", pady=(0, 12)
         )
 
     def _detail_flashcards(
         self, subject: dict[str, Any], cards: list[dict[str, Any]], stats: dict[str, int]
     ) -> None:
         FlashcardsSection(self.detail_scroll, self.app, str(subject.get("name") or ""), cards, stats).grid(
-            row=4, column=0, sticky="ew", pady=(0, 12)
+            row=5, column=0, sticky="ew", pady=(0, 12)
         )
 
     def _detail_teacher(self, subject: dict[str, Any]) -> None:
         card = Card(self.detail_scroll)
-        card.grid(row=6, column=0, sticky="ew", pady=(0, 12))
+        card.grid(row=7, column=0, sticky="ew", pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -777,7 +784,7 @@ class SubjectsView(ctk.CTkFrame):
 
     def _detail_links(self, subject: dict[str, Any]) -> None:
         card = Card(self.detail_scroll)
-        card.grid(row=7, column=0, sticky="ew", pady=(0, 12))
+        card.grid(row=8, column=0, sticky="ew", pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -818,7 +825,7 @@ class SubjectsView(ctk.CTkFrame):
         if not notes:
             return
         card = Card(self.detail_scroll)
-        card.grid(row=8, column=0, sticky="ew", pady=(0, 4))
+        card.grid(row=9, column=0, sticky="ew", pady=(0, 4))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,

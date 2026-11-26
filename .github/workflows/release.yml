@@ -1,0 +1,67 @@
+# Build di Lectio.exe su Windows e pubblicazione nelle Release di GitHub.
+#
+# - Pull request: compila e allega l'exe come artifact (verifica della build).
+# - Tag "v*" (es. v1.4.2): compila e pubblica la Release con Lectio.exe allegato.
+#   Il link https://github.com/andreagioiaa/Lectio/releases/latest/download/Lectio.exe
+#   punta sempre all'ultima versione.
+#
+# Stessi passi di build.ps1, senza venv e senza prompt interattivi.
+name: Build e Release
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+
+      - name: Dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Test
+        run: python -m unittest discover -s tests -v
+
+      - name: PyInstaller
+        run: python -m PyInstaller --noconfirm --clean Lectio.spec
+
+      - name: Controllo eseguibile
+        shell: pwsh
+        run: |
+          $exe = "dist\Lectio.exe"
+          if (-not (Test-Path $exe)) { throw "dist\Lectio.exe non trovato" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          "Lectio.exe: $mb MB" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lectio-windows
+          path: dist/Lectio.exe
+          retention-days: 7
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Lectio.exe
+          name: Lectio ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Installer per Windows 10/11 a 64 bit: scarica **Lectio.exe** e avvialo.
+            L'eseguibile non è firmato: Windows SmartScreen può mostrare "Windows ha protetto il PC";
+            scegli "Ulteriori informazioni" → "Esegui comunque".

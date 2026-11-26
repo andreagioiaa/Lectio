@@ -1,4 +1,4 @@
-# StudyFlow - Gestionale Studio & Analytics Desktop
+# Lectio - Gestionale Studio & Analytics Desktop
 # Runtime Python consigliato: 3.12.x (64 bit)
 customtkinter==5.2.2
 psutil==7.2.2
@@ -27,9 +27,9 @@ pypandoc_binary==1.17
 pyinstaller==6.20.0
 
 # Nota: l'estrazione audio YouTube e la trascrizione usano FFmpeg, disponibile
-# nel PATH oppure come ffmpeg.exe nella cartella dati di StudyFlow. Non e' un
+# nel PATH oppure come ffmpeg.exe nella cartella dati di Lectio. Non e' un
 # pacchetto Python. I modelli GGML di whisper.cpp non sono inclusi: vengono
-# scaricati una sola volta in %LOCALAPPDATA%\StudyFlow\models.
+# scaricati una sola volta in %LOCALAPPDATA%\Lectio\models.
 #
 # PDF e Slide - motori facoltativi, installati a parte e trovati automaticamente:
 # - Tesseract-OCR (eseguibile, con la lingua "ita") per i PDF scansionati;

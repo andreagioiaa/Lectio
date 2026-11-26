@@ -193,7 +193,7 @@ SECTION_LEVEL_LABELS = {
     "subsubsection": "\\subsubsection",
     "paragraph": "\\paragraph",
 }
-CONTENT_MARKER = "% STUDYFLOW:CONTENUTO"
+CONTENT_MARKER = "% LECTIO:CONTENUTO"
 TITLE_PLACEHOLDER = "{{TITOLO}}"
 
 
@@ -420,7 +420,7 @@ def _template_uses_package(template: str, package: str) -> bool:
 def apply_template(template: str, body: str, options: RenderOptions) -> str:
     """Inserisce ``body`` in un template .tex dell'utente.
 
-    - il contenuto va al posto della riga ``% STUDYFLOW:CONTENUTO`` se presente,
+    - il contenuto va al posto della riga ``% LECTIO:CONTENUTO`` se presente,
       altrimenti subito prima di ``\\end{document}``;
     - ``{{TITOLO}}`` e un ``\\title{}`` vuoto vengono riempiti con il titolo;
     - se mancano, ``amsmath`` e ``amssymb`` (servono alle formule) vengono
@@ -439,7 +439,7 @@ def apply_template(template: str, body: str, options: RenderOptions) -> str:
     ):
         missing.append("xcolor")
     if missing:
-        extra = "".join(f"\\usepackage{{{pkg}}} % aggiunto da StudyFlow\n" for pkg in missing)
+        extra = "".join(f"\\usepackage{{{pkg}}} % aggiunto da Lectio\n" for pkg in missing)
         index = text.find("\\begin{document}")
         text = text[:index] + extra + text[index:]
     content = body.strip() + "\n"
@@ -837,9 +837,9 @@ def slides_to_pandoc_markdown(slides: list[Slide], options: RenderOptions) -> st
 def find_pandoc() -> str | None:
     """Pandoc locale: variabile d'ambiente, cartella dati, pypandoc-binary o PATH."""
     exe = "pandoc.exe" if os.name == "nt" else "pandoc"
-    candidates = [os.environ.get("STUDYFLOW_PANDOC", ""), str(app_data_dir() / exe)]
+    candidates = [os.environ.get("LECTIO_PANDOC", ""), str(app_data_dir() / exe)]
     if getattr(sys, "frozen", False):
-        # build.ps1 copia pandoc.exe accanto a StudyFlow.exe (non dentro l'exe
+        # build.ps1 copia pandoc.exe accanto a Lectio.exe (non dentro l'exe
         # one-file, che altrimenti andrebbe estratto a ogni avvio).
         candidates.append(str(Path(sys.executable).resolve().parent / exe))
     for candidate in candidates:
@@ -887,11 +887,11 @@ def export_docx(source: str, source_format: str, target: str | Path, options: Re
     if not command:
         raise ExportError(
             "Pandoc non trovato. Installa le dipendenze (pypandoc-binary) oppure copia "
-            "pandoc.exe nella cartella dati di StudyFlow."
+            "pandoc.exe nella cartella dati di Lectio."
         )
     target_path = Path(target)
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="studyflow-docx-") as temp:
+    with tempfile.TemporaryDirectory(prefix="lectio-docx-") as temp:
         if source_format == SOURCE_LATEX:
             input_path = Path(temp) / "input.tex"
             input_path.write_text(source, encoding="utf-8")
@@ -1041,7 +1041,7 @@ def slides_to_html(slides: list[Slide], options: RenderOptions) -> str:
                 body.append(f"<p>{_html_inline(block.text)}</p>")
         close()
         body.append("</section>")
-    title = html.escape(options.title or "Anteprima StudyFlow")
+    title = html.escape(options.title or "Anteprima Lectio")
     return f"""<!DOCTYPE html>
 <html lang="it">
 <head>

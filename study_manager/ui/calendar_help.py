@@ -1,4 +1,4 @@
-"""Tutorial in-app: come collegare i calendari Google a StudyFlow.
+"""Tutorial in-app: come collegare i calendari Google a Lectio.
 
 Due metodi, in due schede:
 
@@ -52,7 +52,7 @@ ICAL_STEPS: tuple[tuple[str, str, str], ...] = (
         "https://calendar.google.com/calendar/ical/<id>/private-<codice>/basic.ics",
     ),
     (
-        "Incollalo in StudyFlow",
+        "Incollalo in Lectio",
         "Apri Impostazioni > \"Calendari tramite indirizzo iCal\", incolla "
         "l'indirizzo, scegli la materia (facoltativo) e premi \"Aggiungi\". "
         "Ripeti per ogni calendario.",
@@ -69,10 +69,10 @@ ICAL_STEPS: tuple[tuple[str, str, str], ...] = (
 
 ICAL_NOTES: tuple[str, ...] = (
     "Sola lettura: gli eventi di Google si modificano su Google; quelli creati in "
-    "StudyFlow restano solo in StudyFlow.",
-    "Un evento eliminato su Google sparisce anche da StudyFlow; sessioni e "
+    "Lectio restano solo in Lectio.",
+    "Un evento eliminato su Google sparisce anche da Lectio; sessioni e "
     "materiali collegati restano.",
-    "L'indirizzo segreto e' come una password: StudyFlow lo cifra e non lo mette "
+    "L'indirizzo segreto e' come una password: Lectio lo cifra e non lo mette "
     "nei backup. Se lo hai diffuso, usa \"Reimposta\" su Google e incolla quello nuovo.",
     "Google aggiorna questo indirizzo con un certo ritardo: una modifica appena "
     "fatta puo' comparire dopo un po'.",
@@ -82,7 +82,7 @@ API_STEPS: tuple[tuple[str, str, str], ...] = (
     (
         "Crea un progetto in Google Cloud",
         "Apri la Google Cloud Console con il tuo account Google e crea un nuovo "
-        "progetto (es. \"StudyFlow\"). E' gratuito.",
+        "progetto (es. \"Lectio\"). E' gratuito.",
         "",
     ),
     (
@@ -106,7 +106,7 @@ API_STEPS: tuple[tuple[str, str, str], ...] = (
         "credentials.json  →  { \"installed\": { \"client_id\": ..., ... } }",
     ),
     (
-        "Collega l'account in StudyFlow",
+        "Collega l'account in Lectio",
         "Apri Impostazioni > \"Google Calendar tramite API\", premi \"Carica "
         "credentials.json\" e poi \"Connetti account\": si apre il browser, accedi e "
         "accetta. I calendari con lo stesso nome di una materia vengono abbinati da soli.",
@@ -115,7 +115,7 @@ API_STEPS: tuple[tuple[str, str, str], ...] = (
 )
 
 API_NOTES: tuple[str, ...] = (
-    "Bidirezionale: gli eventi creati, modificati o eliminati in StudyFlow vengono "
+    "Bidirezionale: gli eventi creati, modificati o eliminati in Lectio vengono "
     "inviati a Google, anche dopo un periodo offline.",
     "I colori dei calendari e dei singoli eventi arrivano direttamente da Google.",
     "Token e client_secret sono cifrati con Windows e non finiscono nei backup.",
@@ -157,7 +157,7 @@ class CalendarHelpDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             self,
             text=(
-                "Due modi per portare i tuoi calendari Google in StudyFlow. Se vuoi solo "
+                "Due modi per portare i tuoi calendari Google in Lectio. Se vuoi solo "
                 "vedere le lezioni nell'agenda, scegli l'indirizzo iCal: bastano 2 minuti."
             ),
             font=font(11),
@@ -256,7 +256,7 @@ class CalendarHelpDialog(ctk.CTkToplevel):
         else:
             intro = (
                 "Nessun login e nessuna configurazione tecnica: copi un indirizzo per "
-                "ogni calendario e StudyFlow legge gli eventi. Sola lettura."
+                "ogni calendario e Lectio legge gli eventi. Sola lettura."
             )
             steps, notes = ICAL_STEPS, ICAL_NOTES
             links = (("Apri Google Calendar", GOOGLE_CALENDAR_URL),)

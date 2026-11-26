@@ -1,4 +1,4 @@
-# StudyFlow - Gestionale Studio & Analytics Desktop
+# Lectio - Gestionale Studio & Analytics Desktop
 
 Applicazione desktop Windows per organizzare lo studio con il metodo Pomodoro,
 bloccare le distrazioni, importare il calendario Google, gestire materiali e PDF,
@@ -50,7 +50,7 @@ per l'elaborazione o la sincronizzazione dei dati.
 - In alternativa, sincronizzazione bidirezionale con Google Calendar (OAuth 2.0 PKCE): un
   calendario Google per materia, colori Google, sync automatica all'avvio e
   pulsante **Sincronizza Ora** con indicatore del tempo trascorso, creazione /
-  modifica / eliminazione degli eventi da StudyFlow con coda offline.
+  modifica / eliminazione degli eventi da Lectio con coda offline.
 
 ### Materiali dentro le materie
 - I PDF, i documenti e le note non hanno piu' una sezione autonoma: ogni
@@ -175,7 +175,7 @@ per l'elaborazione o la sincronizzazione dei dati.
   download del modello di trascrizione e solo su richiesta dell'utente per
   scaricare l'audio da YouTube.
 - **FFmpeg** per il download YouTube e per l'estrazione audio delle videolezioni:
-  deve essere nel `PATH`, nella cartella dati di StudyFlow oppure in una cartella
+  deve essere nel `PATH`, nella cartella dati di Lectio oppure in una cartella
   `ffmpeg` al suo interno. Sul PC di sviluppo e' installato con
   `winget install Gyan.FFmpeg`.
 - Per la trascrizione non serve una GPU: il motore `whisper.cpp` usa la CPU. Il
@@ -247,11 +247,11 @@ Opzioni disponibili:
 ```powershell
 python main.py --version
 python main.py --debug
-python main.py --data-dir C:\StudyFlowData
+python main.py --data-dir C:\LectioData
 ```
 
 `--data-dir` e' utile per test o per una modalita' portabile. In alternativa si
-puo' impostare la variabile d'ambiente `STUDYFLOW_DATA_DIR`.
+puo' impostare la variabile d'ambiente `LECTIO_DATA_DIR`.
 
 ---
 
@@ -260,7 +260,7 @@ puo' impostare la variabile d'ambiente `STUDYFLOW_DATA_DIR`.
 ```text
 StudyApp/
 ├── main.py                     # entry point, istanza singola, modalita' guard
-├── StudyFlow.spec              # build PyInstaller one-file
+├── Lectio.spec              # build PyInstaller one-file
 ├── build.ps1                   # venv + dipendenze + test + build
 ├── requirements.txt            # dipendenze runtime e build
 ├── version_info.txt            # metadati versione dell'exe
@@ -339,7 +339,7 @@ StudyApp/
 Cartella predefinita:
 
 ```text
-%LOCALAPPDATA%\StudyFlow\
+%LOCALAPPDATA%\Lectio\
 ```
 
 Contenuto:
@@ -347,7 +347,7 @@ Contenuto:
 | File | Descrizione |
 |---|---|
 | `study_manager.db` | database SQLite con sessioni, tentativi, materiali, eventi, videolezioni, materie, flashcard, storico ripassi, blacklist e impostazioni |
-| `logs\studyflow.log` | log dell'applicazione, con rotazione |
+| `logs\lectio.log` | log dell'applicazione, con rotazione |
 | `logs\hosts_guard.log` | log del processo elevato |
 | `transcripts\*.txt` | trascrizioni delle videolezioni, in UTF-8 |
 | `backups\*.zip` | backup di sicurezza creati automaticamente prima di ogni importazione |
@@ -363,14 +363,14 @@ il database conserva il percorso originale scelto dall'utente.
 
 Il database usa WAL, `foreign_keys=ON`, connessioni thread-locali e timeout per
 evitare errori di lock. Il file hosts non viene mai sostituito in blocco: vengono
-gestiti solo i marcatori StudyFlow, preservando il contenuto dell'utente.
+gestiti solo i marcatori Lectio, preservando il contenuto dell'utente.
 
 Per una copia di sicurezza manuale e' sufficiente chiudere l'app e copiare la
-cartella `%LOCALAPPDATA%\StudyFlow` (inclusi `transcripts` e `models`, se
+cartella `%LOCALAPPDATA%\Lectio` (inclusi `transcripts` e `models`, se
 presenti) e, se presente, la cartella `sounds` accanto all'applicazione. Per un
 backup portabile usare invece **Impostazioni → Esporta dati**: il file ZIP
 contiene database, impostazioni, flashcard e trascrizioni ed e' importabile su un
-altro PC con la stessa versione di StudyFlow.
+altro PC con la stessa versione di Lectio.
 
 ---
 
@@ -386,12 +386,12 @@ amministratore. Il flusso e' il seguente:
    UAC**.
 4. Il guardiano elevato applica la sezione gestita al file hosts:
    ```text
-   # >>> STUDYFLOW MANAGED BLOCK - DO NOT EDIT >>>
+   # >>> LECTIO MANAGED BLOCK - DO NOT EDIT >>>
    ...
    127.0.0.1 youtube.com
    127.0.0.1 www.youtube.com
    ...
-   # <<< STUDYFLOW MANAGED BLOCK <<<
+   # <<< LECTIO MANAGED BLOCK <<<
    ```
 5. L'app avvia il listener loopback per registrare i tentativi HTTP/HTTPS.
 6. Alla fine della fase di lavoro, al reset o alla chiusura, l'app chiede al
@@ -409,9 +409,9 @@ bloccati. La vista **Blocco distrazioni** mostra l'errore e il pulsante
 **Riprova autorizzazione siti**.
 
 La sezione **Blocco distrazioni > Ripristina file hosts** richiede l'elevazione
-solo se esiste davvero una sezione StudyFlow residua o un guardiano attivo.
+solo se esiste davvero una sezione Lectio residua o un guardiano attivo.
 
-> Non avviare StudyFlow.exe con "Esegui come amministratore": non e' necessario e
+> Non avviare Lectio.exe con "Esegui come amministratore": non e' necessario e
 > rende piu' difficile distinguere i privilegi del processo principale da quelli
 > del guardiano.
 
@@ -427,7 +427,7 @@ Il monitor dei processi:
 - registra il tentativo nel database;
 - se l'opzione e' attiva, prova a terminare il processo.
 
-I processi di sistema fondamentali e StudyFlow stesso sono esclusi dalla
+I processi di sistema fondamentali e Lectio stesso sono esclusi dalla
 terminazione. Applicazioni avviate con privilegi superiori potrebbero non essere
 terminabili da una sessione utente standard: in quel caso il tentativo viene
 comunque registrato quando rilevato.
@@ -461,7 +461,7 @@ come sessione Pomodoro con **Studia ora**.
 
 E' il modo piu' semplice: nessun progetto Google Cloud, nessun login. Per ogni
 calendario Google (per esempio uno per materia) si copia il suo **indirizzo
-segreto in formato iCal** e lo si incolla in StudyFlow. Gli eventi vengono
+segreto in formato iCal** e lo si incolla in Lectio. Gli eventi vengono
 scaricati all'avvio e con **Calendario > Sincronizza Ora**.
 
 **Come trovare l'indirizzo segreto iCal di un calendario Google**
@@ -476,7 +476,7 @@ scaricati all'avvio e con **Calendario > Sincronizza Ora**.
 5. In **Indirizzo segreto in formato iCal** clicca sull'icona dell'occhio per
    mostrarlo, poi sull'icona **Copia**. L'indirizzo ha questa forma:
    `https://calendar.google.com/calendar/ical/<id-calendario>/private-<codice>/basic.ics`
-6. In StudyFlow apri **Impostazioni > Calendari tramite indirizzo iCal**,
+6. In Lectio apri **Impostazioni > Calendari tramite indirizzo iCal**,
    incolla l'indirizzo, scegli la materia (facoltativo) e premi **Aggiungi**.
 7. Ripeti per ogni calendario. Clicca sul pallino colorato di un calendario
    per sceglierne il colore (l'indirizzo iCal non contiene i colori di Google).
@@ -486,10 +486,10 @@ Note:
 - **Non usare** l'"Indirizzo pubblico in formato iCal": funziona solo se il
   calendario e' pubblico, cioe' visibile a chiunque.
 - L'indirizzo segreto e' come una password: chi lo conosce vede tutti gli
-  eventi. StudyFlow lo cifra con Windows (DPAPI), non lo scrive nei log e non
+  eventi. Lectio lo cifra con Windows (DPAPI), non lo scrive nei log e non
   lo include nel backup ZIP (dopo un ripristino su un altro PC va reincollato).
   Se pensi che sia stato diffuso, nella stessa sezione di Google Calendar usa
-  **Reimposta**: il vecchio indirizzo smette di funzionare e in StudyFlow
+  **Reimposta**: il vecchio indirizzo smette di funzionare e in Lectio
   comparira' un errore finche' non aggiungi quello nuovo.
 - Per un calendario condiviso con te da un'altra persona l'indirizzo segreto
   potrebbe non essere disponibile: puo' copiarlo e mandartelo il proprietario.
@@ -498,17 +498,17 @@ Note:
 
 Comportamento:
 
-- **Sola lettura**: gli eventi letti da iCal non si modificano in StudyFlow;
-  quelli creati con **+ Nuovo Evento** restano solo in StudyFlow.
+- **Sola lettura**: gli eventi letti da iCal non si modificano in Lectio;
+  quelli creati con **+ Nuovo Evento** restano solo in Lectio.
 - **Materia e colore**: un calendario abbinato a una materia assegna quella
   materia e il suo colore a tutti gli eventi; senza materia vale il fallback
   dell'import `.ics` (categorie, poi titolo dell'evento).
 - **Cancellazione speculare**: un evento eliminato su Google sparisce da
-  StudyFlow alla sincronizzazione successiva; sessioni e materiali collegati
+  Lectio alla sincronizzazione successiva; sessioni e materiali collegati
   restano (viene solo azzerato il collegamento all'evento). Rimuovendo un
   indirizzo dalle Impostazioni spariscono i suoi eventi.
 - Google aggiorna il file iCal con un certo ritardo: una modifica appena fatta
-  su Google puo' comparire in StudyFlow solo dopo un po'.
+  su Google puo' comparire in Lectio solo dopo un po'.
 
 ### Google Calendar tramite API (avanzato, sincronizzazione bidirezionale)
 
@@ -519,13 +519,13 @@ Comportamento:
    (tipo "Esterno", aggiungendo il tuo account tra gli utenti di test).
 2. In **Credenziali > Crea credenziali > ID client OAuth** scegli il tipo
    **App desktop** e scarica il file JSON.
-3. In StudyFlow apri **Impostazioni > Google Calendar**, premi **Carica
+3. In Lectio apri **Impostazioni > Google Calendar**, premi **Carica
    credentials.json**, poi **Connetti account** e accetta nel browser.
 
 Il consenso usa OAuth 2.0 per app desktop: PKCE (S256) e un server di ritorno su
 `127.0.0.1` con porta effimera. `access_token`, `refresh_token` e
 `client_secret` sono cifrati con Windows DPAPI (legati all'utente Windows), non
-compaiono mai in `studyflow.log` e sono esclusi dal backup ZIP; un ripristino
+compaiono mai in `lectio.log` e sono esclusi dal backup ZIP; un ripristino
 conserva il collegamento Google gia' presente sul PC.
 
 **Calendari, materie e colori**
@@ -544,20 +544,20 @@ conserva il collegamento Google gia' presente sul PC.
 
 **Come funziona la sincronizzazione**
 
-1. *Flush della coda* (StudyFlow -> Google): `google_pending_create` (POST),
+1. *Flush della coda* (Lectio -> Google): `google_pending_create` (POST),
    `google_pending_update` (`move` se la materia ha cambiato calendario, poi
    PATCH), `google_pending_delete` (DELETE; il record "tombstone" sparisce su
    204/410). La coda viene inviata subito dopo ogni modifica, in background; se
    sei offline resta in attesa della sincronizzazione successiva.
-2. *Pull* (Google -> StudyFlow) per ogni calendario abilitato, con upsert su
+2. *Pull* (Google -> Lectio) per ogni calendario abilitato, con upsert su
    `(google_calendar_id, google_event_id)`. Le modifiche locali ancora in coda
    non vengono mai sovrascritte.
 3. *Cancellazione speculare*: un evento eliminato su Google sparisce anche da
-   StudyFlow; sessioni e materiali collegati restano (viene solo azzerato
+   Lectio; sessioni e materiali collegati restano (viene solo azzerato
    `calendar_event_id`).
 
 Gli eventi importati da `.ics` restano locali; un nuovo evento con una materia
-senza calendario Google resta solo in StudyFlow (`source = 'manual'`).
+senza calendario Google resta solo in Lectio (`source = 'manual'`).
 
 ---
 
@@ -618,7 +618,7 @@ compare temporaneamente la voce **Materiali senza materia**: aprendo **Modifica*
 si puo' assegnare loro una materia esistente o scriverne una nuova.
 
 Il file originale non viene copiato ne' modificato. Se viene spostato o
-cancellato, StudyFlow mostra "non trovato" e permette comunque di modificare il
+cancellato, Lectio mostra "non trovato" e permette comunque di modificare il
 record.
 
 Avviando un Pomodoro da un materiale, i minuti effettivi vengono aggiunti alle
@@ -627,9 +627,9 @@ ore registrate sia che la sessione venga completata sia che venga interrotta.
 ### Cartella di ogni materia
 
 Ogni materia ha una cartella su disco nella radice di funzionamento dell'app
-(accanto a `StudyFlow.exe`, oppure nella radice del progetto in modalita'
-sorgente; se non e' scrivibile si usa `%LOCALAPPDATA%\StudyFlow\Materie`.
-`STUDYFLOW_SUBJECTS_DIR` permette di scegliere un altro percorso):
+(accanto a `Lectio.exe`, oppure nella radice del progetto in modalita'
+sorgente; se non e' scrivibile si usa `%LOCALAPPDATA%\Lectio\Materie`.
+`LECTIO_SUBJECTS_DIR` permette di scegliere un altro percorso):
 
 ```text
 Materie/
@@ -670,10 +670,10 @@ D:\StudyApp\sounds\                 # avvio da sorgente
 D:\StudyApp\dist\sounds\            # exe nella cartella dist
 ```
 
-Se l'applicazione viene installata in una posizione non scrivibile, StudyFlow usa
-automaticamente `%LOCALAPPDATA%\StudyFlow\sounds\`. Con `--data-dir` o
-`STUDYFLOW_DATA_DIR` la cartella diventa `<data-dir>\sounds`; si puo' forzare un
-percorso con `STUDYFLOW_SOUNDS_DIR`.
+Se l'applicazione viene installata in una posizione non scrivibile, Lectio usa
+automaticamente `%LOCALAPPDATA%\Lectio\sounds\`. Con `--data-dir` o
+`LECTIO_DATA_DIR` la cartella diventa `<data-dir>\sounds`; si puo' forzare un
+percorso con `LECTIO_SOUNDS_DIR`.
 
 Sono supportati MP3, OGG, WAV e FLAC. La vista **Audio** permette di
 riprodurli, importarli dal disco e aprire la cartella. La riproduzione usa
@@ -682,13 +682,13 @@ riprodurli, importarli dal disco e aprire la cartella. La riproduzione usa
 ### Download da YouTube
 YouTube non espone una modalita' di ascolto ufficiale solo-audio: il browser
 riproduce il flusso video e non esiste un'API pubblica per ottenere soltanto la
-traccia audio. StudyFlow quindi scarica la traccia migliore con `yt-dlp`, la
+traccia audio. Lectio quindi scarica la traccia migliore con `yt-dlp`, la
 converte in MP3 a 192 kbps con FFmpeg e la salva con il titolo del video.
 
 Procedura:
 
 1. Incollare un link `youtube.com`, `youtu.be` o Shorts nella vista **Audio**.
-2. Premere **Scarica audio**. StudyFlow legge prima titolo e durata.
+2. Premere **Scarica audio**. Lectio legge prima titolo e durata.
 3. Se esiste gia' un file con lo stesso nome, scegliere:
    - **Crea Copia**: salva come `Titolo (copia 2).mp3`;
    - **Vai a Cartella**: apre Esplora file con il file esistente selezionato;
@@ -697,12 +697,12 @@ Procedura:
    I caratteri non validi per Windows vengono sostituiti e i nomi riservati
    (`CON`, `PRN`, ecc.) sono prefissati con `_`.
 
-FFmpeg deve essere disponibile nel `PATH`, accanto a `StudyFlow.exe`, nella
-cartella che contiene `sounds`, oppure in `%LOCALAPPDATA%\StudyFlow\ffmpeg.exe` /
-`%LOCALAPPDATA%\StudyFlow\ffmpeg\ffmpeg.exe`. La vista Audio mostra lo stato del
+FFmpeg deve essere disponibile nel `PATH`, accanto a `Lectio.exe`, nella
+cartella che contiene `sounds`, oppure in `%LOCALAPPDATA%\Lectio\ffmpeg.exe` /
+`%LOCALAPPDATA%\Lectio\ffmpeg\ffmpeg.exe`. La vista Audio mostra lo stato del
 rilevamento.
 
-Per risolvere le sfide JavaScript di YouTube, StudyFlow include `yt-dlp-ejs` e
+Per risolvere le sfide JavaScript di YouTube, Lectio include `yt-dlp-ejs` e
 rileva automaticamente Deno, Node.js 22+, Bun o QuickJS nel `PATH`. Node.js 22+
 oppure Deno sono consigliati per la massima compatibilita'.
 
@@ -717,7 +717,7 @@ oppure Deno sono consigliati per la massima compatibilita'.
 - Il volume e' regolabile dal lettore e viene salvato.
 - La musica automatica va in pausa quando il timer viene messo in pausa e si
   ferma alla fine della fase di lavoro.
-- Se si riproduce un brano manualmente, StudyFlow non lo interrompe al cambio
+- Se si riproduce un brano manualmente, Lectio non lo interrompe al cambio
   fase.
 
 ### Suoni generati
@@ -735,7 +735,7 @@ collegate a una materia o a un tag del calendario. Ogni record contiene titolo,
 percorso del video, materia, percorso e nome del file `.txt`, stato, progresso,
 modello, lingua e date di creazione/aggiornamento.
 
-Il video non viene copiato ne' modificato: StudyFlow conserva il percorso
+Il video non viene copiato ne' modificato: Lectio conserva il percorso
 originale. Se il file viene spostato o cancellato, la scheda lo segnala e permette
 di modificarne i metadati o rimuovere il record senza toccare il disco.
 
@@ -823,11 +823,11 @@ mostrano un avviso.
 ### Percorsi
 
 ```text
-%LOCALAPPDATA%\StudyFlow\transcripts\   # file .txt
-%LOCALAPPDATA%\StudyFlow\models\        # ggml-*.bin
+%LOCALAPPDATA%\Lectio\transcripts\   # file .txt
+%LOCALAPPDATA%\Lectio\models\        # ggml-*.bin
 ```
 
-Con `--data-dir` o `STUDYFLOW_DATA_DIR` entrambe le cartelle si trovano sotto la
+Con `--data-dir` o `LECTIO_DATA_DIR` entrambe le cartelle si trovano sotto la
 cartella dati scelta.
 
 ---
@@ -859,7 +859,7 @@ il lavoro avviene sul PC: nessun file viene inviato a servizi esterni.
 | Formule complesse | Marker o Nougat | solo pagine con formule oppure tutte |
 
 Tesseract viene cercato nel `PATH`, in `C:\Program Files\Tesseract-OCR`, nella
-cartella dati (`tesseract\tesseract.exe`) o nella variabile `STUDYFLOW_TESSERACT`.
+cartella dati (`tesseract\tesseract.exe`) o nella variabile `LECTIO_TESSERACT`.
 Le lingue (`ita+eng`) vengono ridotte a quelle installate.
 
 Marker e Nougat sono CLI basate su PyTorch, quindi non sono incluse nell'exe: si
@@ -874,7 +874,7 @@ nougat {inputs} -o {output_dir} --no-skipping
 
 Ogni pagina selezionata viene salvata come PDF singolo e il motore viene avviato
 una sola volta su tutti i file, cosi' il modello si carica una volta e ogni output
-resta associato alla sua slide. Se il motore fallisce, StudyFlow usa il
+resta associato alla sua slide. Se il motore fallisce, Lectio usa il
 riconoscimento integrato e lo segnala sotto l'editor. Al primo avvio Marker e
 Nougat scaricano i propri modelli: e' un comportamento loro, attivato solo se
 scelti esplicitamente.
@@ -930,7 +930,7 @@ ritorno a Markdown riconverte i comandi noti e lascia gli altri come testo.
   di Word, titoli con gli stili Titolo 1/2, elenchi Word, marcatori di slide con
   lo stile "Slide Marker". Opzione per una nuova pagina a ogni slide. Per usare
   stili personalizzati basta copiare un modello Word in
-  `%LOCALAPPDATA%\StudyFlow\pdf_reference.docx`.
+  `%LOCALAPPDATA%\Lectio\pdf_reference.docx`.
 - Le opzioni **Marcatori e numeri di slide**, **Titoli delle slide** e
   **Preambolo LaTeX** valgono per anteprima, copia ed esportazione.
 
@@ -1039,14 +1039,14 @@ Nella vista **Impostazioni** sono disponibili i pulsanti **Esporta dati** e
 Il backup e' un file ZIP portabile con questa struttura:
 
 ```text
-StudyFlow-backup-YYYYmmdd-HHMMSS.zip
+Lectio-backup-YYYYmmdd-HHMMSS.zip
 ├── manifest.json        # formato, versione, data e conteggi
 ├── data.json            # tutte le tabelle applicative
 └── transcripts/
     └── *.txt            # trascrizioni delle videolezioni
 ```
 
-`manifest.json` contiene `format: "studyflow-backup"`, `backup_version`,
+`manifest.json` contiene `format: "lectio-backup"`, `backup_version`,
 `schema_version`, `app_version`, la data di esportazione e il numero di righe per
 tabella. `data.json` contiene le tabelle `settings`, `subjects`,
 `calendar_events`, `sessions`, `materials`, `distraction_attempts`,
@@ -1064,11 +1064,11 @@ Non vengono inclusi:
 
 L'importazione e' **sostitutiva**: dopo la conferma, tutte le tabelle applicative
 vengono svuotate e ricaricate dal backup, poi le trascrizioni vengono estratte
-nella cartella `transcripts`. Prima di modificare qualsiasi dato, StudyFlow crea
+nella cartella `transcripts`. Prima di modificare qualsiasi dato, Lectio crea
 automaticamente un backup di sicurezza:
 
 ```text
-%LOCALAPPDATA%\StudyFlow\backups\backup-pre-import-YYYYmmdd-HHMMSS.zip
+%LOCALAPPDATA%\Lectio\backups\backup-pre-import-YYYYmmdd-HHMMSS.zip
 ```
 
 Se un percorso di trascrizione salvato nel backup non esiste su quel PC, l'app
@@ -1152,7 +1152,7 @@ trascrizione, avvia e azzera un timer e chiude l'applicazione. L'equivalente sul
 build e':
 
 ```powershell
-Start-Process .\dist\StudyFlow.exe -ArgumentList '--smoke-test' -Wait -PassThru
+Start-Process .\dist\Lectio.exe -ArgumentList '--smoke-test' -Wait -PassThru
 ```
 
 Il codice di uscita deve essere `0` e il log deve contenere
@@ -1162,28 +1162,28 @@ Per verificare anche una trascrizione reale nella build, indicare un video e una
 cartella dati persistente. Se il modello manca, viene scaricato durante il test:
 
 ```powershell
-$env:STUDYFLOW_SMOKE_TRANSCRIBE_VIDEO = "C:\video\lezione.mp4"
-Start-Process .\dist\StudyFlow.exe `
-  -ArgumentList '--smoke-test','--data-dir','C:\StudyFlowSmoke' `
+$env:LECTIO_SMOKE_TRANSCRIBE_VIDEO = "C:\video\lezione.mp4"
+Start-Process .\dist\Lectio.exe `
+  -ArgumentList '--smoke-test','--data-dir','C:\LectioSmoke' `
   -Wait -PassThru
-Remove-Item Env:STUDYFLOW_SMOKE_TRANSCRIBE_VIDEO
+Remove-Item Env:LECTIO_SMOKE_TRANSCRIBE_VIDEO
 ```
 
 Per evitare il download, copiare il modello in
-`C:\StudyFlowSmoke\models\ggml-base-q5_1.bin`. La verifica richiede FFmpeg e puo'
+`C:\LectioSmoke\models\ggml-base-q5_1.bin`. La verifica richiede FFmpeg e puo'
 durare piu' a lungo; il log riporta il percorso del `.txt` prodotto e il numero
 di blocchi.
 
 Per verificare anche il download YouTube e la decodifica MP3 nella build, si puo'
-impostare un URL pubblico nella variabile `STUDYFLOW_SMOKE_YOUTUBE_URL`. Il test
+impostare un URL pubblico nella variabile `LECTIO_SMOKE_YOUTUBE_URL`. Il test
 scarica il brano nella cartella `sounds` temporanea e lo riproduce con il driver
 audio dummy:
 
 ```powershell
-$env:STUDYFLOW_SMOKE_YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+$env:LECTIO_SMOKE_YOUTUBE_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
 $env:SDL_AUDIODRIVER = "dummy"
-Start-Process .\dist\StudyFlow.exe -ArgumentList '--smoke-test' -Wait -PassThru
-Remove-Item Env:STUDYFLOW_SMOKE_YOUTUBE_URL
+Start-Process .\dist\Lectio.exe -ArgumentList '--smoke-test' -Wait -PassThru
+Remove-Item Env:LECTIO_SMOKE_YOUTUBE_URL
 Remove-Item Env:SDL_AUDIODRIVER
 ```
 
@@ -1205,8 +1205,8 @@ Lo script:
 1. crea `.venv` con Python 3.12 se non esiste;
 2. installa le dipendenze da `requirements.txt`;
 3. esegue i test (salvo `-SkipTests`);
-4. esegue PyInstaller con `StudyFlow.spec`;
-5. verifica che `dist\StudyFlow.exe` esista.
+4. esegue PyInstaller con `Lectio.spec`;
+5. verifica che `dist\Lectio.exe` esista.
 
 Per saltare i test:
 
@@ -1219,13 +1219,13 @@ Per saltare i test:
 ```powershell
 Set-Location D:\StudyApp
 py -3.12 -m pip install -r requirements.txt
-py -3.12 -m PyInstaller --noconfirm --clean StudyFlow.spec
+py -3.12 -m PyInstaller --noconfirm --clean Lectio.spec
 ```
 
 Risultato:
 
 ```text
-D:\StudyApp\dist\StudyFlow.exe
+D:\StudyApp\dist\Lectio.exe
 ```
 
 Non serve aggiungere `--onefile`: il file `.spec` contiene gia' una build
@@ -1252,14 +1252,14 @@ Per ricostruire da zero:
 
 ```powershell
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-py -3.12 -m PyInstaller --noconfirm --clean StudyFlow.spec
+py -3.12 -m PyInstaller --noconfirm --clean Lectio.spec
 ```
 
 ### Verifica dell'eseguibile
 
 ```powershell
-.\dist\StudyFlow.exe
-.\dist\StudyFlow.exe --version
+.\dist\Lectio.exe
+.\dist\Lectio.exe --version
 ```
 
 Poiche' l'exe usa `console=False`, `--version` mostra una finestra di messaggio
@@ -1267,17 +1267,17 @@ con la versione invece di scrivere nella console.
 
 La prima volta che si avvia un Pomodoro con il blocco siti attivo deve comparire
 un solo prompt UAC. Dopo l'approvazione, il file hosts deve contenere la sezione
-StudyFlow e deve essere ripristinato alla chiusura dell'app.
+Lectio e deve essere ripristinato alla chiusura dell'app.
 
 Per controllare il manifest:
 
 ```powershell
-Get-Item .\dist\StudyFlow.exe | Select-Object Name, Length, VersionInfo
-(Get-Item .\dist\StudyFlow.exe).VersionInfo.FileVersion
+Get-Item .\dist\Lectio.exe | Select-Object Name, Length, VersionInfo
+(Get-Item .\dist\Lectio.exe).VersionInfo.FileVersion
 ```
 
 La versione attesa per questa release e' `1.4.2.0`. Se si distribuisce l'exe a un
-altro PC, non serve Python: servono solo `StudyFlow.exe` e i permessi utente
+altro PC, non serve Python: servono solo `Lectio.exe` e i permessi utente
 normali. Il guardiano hosts viene avviato dallo stesso exe con l'argomento
 interno `--hosts-guard`. Per il download YouTube e per la trascrizione serve
 anche FFmpeg su quel PC; tutte le altre funzioni audio locali funzionano senza
@@ -1313,10 +1313,10 @@ una sessione attiva.
 ### I siti non vengono bloccati
 - Controllare che il prompt UAC sia stato accettato.
 - Verificare che il browser non usi DNS-over-HTTPS/VPN (vedi limiti).
-- Controllare che il file hosts contenga i marcatori StudyFlow.
+- Controllare che il file hosts contenga i marcatori Lectio.
 - Provare **Ripristina file hosts** e riavviare la sessione.
 
-### Una sezione StudyFlow resta nel file hosts
+### Una sezione Lectio resta nel file hosts
 Aprire **Blocco distrazioni** e premere **Ripristina file hosts**. Il pulsante
 richiede UAC solo se la sezione esiste ancora. In alternativa, aprire il file
 `C:\Windows\System32\drivers\etc\hosts` come amministratore e rimuovere solo il
@@ -1324,24 +1324,24 @@ blocco compreso tra i due marcatori.
 
 ### I grafici non compaiono
 La dashboard carica Matplotlib alla prima apertura. Se la cartella dati o
-l'ambiente Python sono danneggiati, controllare `logs\studyflow.log`.
+l'ambiente Python sono danneggiati, controllare `logs\lectio.log`.
 
 ### Il download YouTube segnala FFmpeg mancante
-Installare FFmpeg e riavviare StudyFlow:
+Installare FFmpeg e riavviare Lectio:
 
 ```powershell
 winget install Gyan.FFmpeg
 ```
 
-In alternativa copiare `ffmpeg.exe` accanto a `StudyFlow.exe`, in
-`%LOCALAPPDATA%\StudyFlow\` oppure in una sottocartella `ffmpeg` di una di queste
+In alternativa copiare `ffmpeg.exe` accanto a `Lectio.exe`, in
+`%LOCALAPPDATA%\Lectio\` oppure in una sottocartella `ffmpeg` di una di queste
 posizioni. La vista **Audio** mostra `FFmpeg pronto` quando il binario viene
 rilevato.
 
 ### La trascrizione segnala FFmpeg mancante
 La trascrizione usa lo stesso FFmpeg del download YouTube. Installarlo con
 `winget install Gyan.FFmpeg` oppure copiarlo nelle posizioni indicate sopra, poi
-riavviare StudyFlow. Senza FFmpeg non e' possibile estrarre l'audio, ma archivio,
+riavviare Lectio. Senza FFmpeg non e' possibile estrarre l'audio, ma archivio,
 filtri e viewer dei `.txt` gia' esistenti restano utilizzabili.
 
 ### Il download del modello di trascrizione non riesce
@@ -1355,12 +1355,12 @@ eliminare `models\ggml-*.bin.part` dalla cartella dati e ripetere.
 L'elaborazione avviene sulla CPU e richiede tempo proporzionale alla durata del
 video. Il modello `base-q5_1` e' il piu' rapido; `small-q5_1` e' piu' preciso ma
 piu' lento. Chiudere applicazioni pesanti, usare video con audio chiaro e
-lasciare StudyFlow aperto: la trascrizione continua in background e non blocca
+lasciare Lectio aperto: la trascrizione continua in background e non blocca
 la navigazione.
 
 ### La trascrizione termina con un errore
 Controllare che il video esista ancora nel percorso indicato e che FFmpeg sia
-rilevato. Aprire `logs\studyflow.log` per il dettaglio tecnico, quindi premere
+rilevato. Aprire `logs\lectio.log` per il dettaglio tecnico, quindi premere
 **Ripeti trascrizione**. Se l'app e' stata chiusa durante il lavoro, il record
 viene marcato `cancelled`; se invece e' terminata in modo imprevisto, compare
 come `error`. In entrambi i casi il `.txt` precedente non viene toccato.
@@ -1368,18 +1368,18 @@ come `error`. In entrambi i casi il `.txt` precedente non viene toccato.
 ### Il file `.txt` non compare nel viewer
 Verificare che la trascrizione sia `completed` e che il file esista nella
 cartella `transcripts`. Usare **Apri cartella trascrizioni** per controllare il
-percorso. Se il file e' stato spostato o rinominato fuori da StudyFlow, il record
+percorso. Se il file e' stato spostato o rinominato fuori da Lectio, il record
 punta ancora al vecchio percorso: ripristinare il file nel percorso originale
 oppure rimuovere e riaggiungere la videolezione.
 
 ### YouTube non trova formati audio o segnala un runtime JavaScript
 Aggiornare `yt-dlp` con `python -m pip install -U yt-dlp` e installare Deno o
-Node.js 22+. StudyFlow rileva automaticamente `deno`, `node`, `bun` e `qjs` nel
+Node.js 22+. Lectio rileva automaticamente `deno`, `node`, `bun` e `qjs` nel
 `PATH`. Alcuni video privati, con restrizioni di eta' o geografiche non sono
 scaricabili.
 
 ### Lo scorrimento con la rotella e' lento o a scatti
-StudyFlow usa uno scorrimento di circa tre righe (60 pixel) per scatto e sceglie
+Lectio usa uno scorrimento di circa tre righe (60 pixel) per scatto e sceglie
 sempre l'area piu' interna sotto il puntatore, quindi le liste annidate non
 scorrono piu' insieme alla pagina che le contiene. Anche i mouse e i touchpad ad
 alta risoluzione, che inviano delta piccoli, producono uno spostamento visibile.
@@ -1387,12 +1387,12 @@ alta risoluzione, che inviano delta piccoli, producono uno spostamento visibile.
 ### Non si sente l'audio
 Controllare il volume di Windows, selezionare un dispositivo di output attivo e
 premere **Riproduci**. Se il mixer non riesce a inizializzarsi, la vista Audio
-mostra l'errore e il pulsante **Riprova**; i dettagli sono in `studyflow.log`.
+mostra l'errore e il pulsante **Riprova**; i dettagli sono in `lectio.log`.
 
 ### Log e diagnosi
 ```text
-%LOCALAPPDATA%\StudyFlow\logs\studyflow.log
-%LOCALAPPDATA%\StudyFlow\logs\hosts_guard.log
+%LOCALAPPDATA%\Lectio\logs\lectio.log
+%LOCALAPPDATA%\Lectio\logs\hosts_guard.log
 ```
 
 Avviare con `python main.py --debug` per il livello DEBUG.
@@ -1400,7 +1400,7 @@ Avviare con `python main.py --debug` per il livello DEBUG.
 ### PDF e Slide: l'esportazione .docx non e' disponibile
 
 Serve Pandoc. Da sorgente lo fornisce `pypandoc_binary` (in `requirements.txt`);
-con l'eseguibile, `build.ps1` copia `pandoc.exe` accanto a `StudyFlow.exe`. In
+con l'eseguibile, `build.ps1` copia `pandoc.exe` accanto a `Lectio.exe`. In
 alternativa si puo' installare Pandoc nel `PATH` o copiare `pandoc.exe` nella
 cartella dati.
 
@@ -1460,7 +1460,7 @@ l'estrazione con Marker o Nougat limitati alle pagine con formule.
   cancellato, il record resta ma la trascrizione non puo' ripartire finche' il
   percorso non torna valido.
 - I `.txt` sono salvati nella cartella `transcripts`; se vengono spostati fuori
-  da quella cartella, StudyFlow non li trova piu'.
+  da quella cartella, Lectio non li trova piu'.
 - Il download di un video puo' richiedere tempo e spazio su disco; non e'
   possibile annullarlo a meta' dalla UI, ma i file temporanei vengono rimossi
   in caso di errore.
@@ -1500,7 +1500,7 @@ l'estrazione con Marker o Nougat limitati alle pagine con formule.
 
 ## 19. Privacy
 
-StudyFlow non invia dati a server remoti, con due eccezioni esplicite:
+Lectio non invia dati a server remoti, con due eccezioni esplicite:
 
 - il download YouTube richiesto dall'utente: `yt-dlp` contatta YouTube per
   leggere il video e scaricarne la traccia;
@@ -1520,6 +1520,6 @@ cartella dati locale.
 
 I backup ZIP vengono creati solo su richiesta dell'utente nella posizione scelta
 e contengono dati personali in chiaro: vanno conservati e condivisi con la stessa
-attenzione del database originale. StudyFlow non carica automaticamente i backup
+attenzione del database originale. Lectio non carica automaticamente i backup
 su alcun servizio. I backup di sicurezza pre-importazione restano nella cartella
 `backups` finche' non vengono eliminati manualmente.

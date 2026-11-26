@@ -69,7 +69,7 @@ class LatexStructureTests(unittest.TestCase):
         latex = markdown_to_latex(MD, options)
         self.assertIn("\\title{Lezione 1}", latex)
         self.assertIn("{\\Huge Lezione 1}", latex)
-        self.assertIn("\\usepackage{amssymb} % aggiunto da StudyFlow", latex)
+        self.assertIn("\\usepackage{amssymb} % aggiunto da Lectio", latex)
         self.assertEqual(latex.count("\\usepackage{amsmath}"), 1)
         self.assertLess(latex.index("\\tableofcontents"), latex.index("\\section{Titolo}"))
         self.assertLess(latex.index("\\section{Titolo}"), latex.index("\\end{document}"))
@@ -108,7 +108,7 @@ class NumberingTests(unittest.TestCase):
 
     def test_starts_from_one_without_template_content(self) -> None:
         self.assertEqual(numbering_for(RenderOptions()).step("section"), "1")
-        marker = TEMPLATE.replace("\\tableofcontents", "\\tableofcontents\n% STUDYFLOW:CONTENUTO")
+        marker = TEMPLATE.replace("\\tableofcontents", "\\tableofcontents\n% LECTIO:CONTENUTO")
         self.assertEqual(numbering_for(RenderOptions(template=marker)).step("section"), "1")
 
     def test_continues_after_template_sections(self) -> None:

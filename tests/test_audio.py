@@ -76,19 +76,19 @@ class AudioPathTests(unittest.TestCase):
             data = root / "data"
             with patch.dict(
                 os.environ,
-                {"STUDYFLOW_DATA_DIR": "", "STUDYFLOW_SOUNDS_DIR": ""},
+                {"LECTIO_DATA_DIR": "", "LECTIO_SOUNDS_DIR": ""},
             ), patch.object(paths, "project_root", return_value=app_root):
                 self.assertEqual(paths.sounds_dir(data), app_root / "sounds")
 
     def test_frozen_sounds_folder_is_beside_exe(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            exe = root / "StudyFlow.exe"
+            exe = root / "Lectio.exe"
             exe.write_bytes(b"exe")
             data = root / "data"
             with patch.dict(
                 os.environ,
-                {"STUDYFLOW_DATA_DIR": "", "STUDYFLOW_SOUNDS_DIR": ""},
+                {"LECTIO_DATA_DIR": "", "LECTIO_SOUNDS_DIR": ""},
             ), patch.object(paths, "is_frozen", return_value=True), patch.object(
                 paths, "executable_path", return_value=exe
             ):
@@ -100,7 +100,7 @@ class AudioPathTests(unittest.TestCase):
             data = root / "data"
             with patch.dict(
                 os.environ,
-                {"STUDYFLOW_DATA_DIR": "", "STUDYFLOW_SOUNDS_DIR": ""},
+                {"LECTIO_DATA_DIR": "", "LECTIO_SOUNDS_DIR": ""},
             ), patch.object(paths, "_is_writable", return_value=False):
                 self.assertEqual(paths.sounds_dir(data), data / "sounds")
 

@@ -227,7 +227,7 @@ class LatexStructureDialog(ctk.CTkToplevel):
             self.template_frame.pack(fill="x", padx=16, pady=(0, 10), before=self.example_title)
             name = self.view.template_name()
             self.template_label.configure(
-                text=f"Template: {name}" if name else "Template: nessuno (preambolo standard di StudyFlow)."
+                text=f"Template: {name}" if name else "Template: nessuno (preambolo standard di Lectio)."
             )
         title = "Nome documento" if self.multiple else self.root_var.get()
         self.example.configure(

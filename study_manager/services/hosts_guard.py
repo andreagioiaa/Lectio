@@ -31,7 +31,7 @@ from .hosts_service import (
 from .uac import pid_alive
 
 
-LOGGER = logging.getLogger("studyflow.hosts_guard")
+LOGGER = logging.getLogger("lectio.hosts_guard")
 _STOP = False
 _HEARTBEAT_TIMEOUT = 150.0
 _POLL_SECONDS = 0.5
@@ -201,7 +201,7 @@ def run_guard(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="StudyFlow --hosts-guard")
+    parser = argparse.ArgumentParser(prog="Lectio --hosts-guard")
     parser.add_argument("--hosts-guard", action="store_true")
     parser.add_argument("--control", required=True)
     parser.add_argument("--status", required=True)

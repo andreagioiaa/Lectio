@@ -1,1 +1,1 @@
-"""Servizi applicativi di StudyFlow."""
+"""Servizi applicativi di Lectio."""

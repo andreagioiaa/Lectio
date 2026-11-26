@@ -58,7 +58,7 @@ class PdfConversionController:
             self._thread = threading.Thread(
                 target=self._run,
                 args=(list(sources), options, self._cancel),
-                name="studyflow-pdf-convert",
+                name="lectio-pdf-convert",
                 daemon=True,
             )
             self._thread.start()
@@ -82,7 +82,7 @@ class PdfConversionController:
                     LOGGER.exception("Operazione PDF non riuscita.")
                     self.events.put({"type": "task_done", "ok": False, "cancelled": False, "error": str(exc)})
 
-            self._thread = threading.Thread(target=runner, name="studyflow-pdf-task", daemon=True)
+            self._thread = threading.Thread(target=runner, name="lectio-pdf-task", daemon=True)
             self._thread.start()
         return True, ""
 

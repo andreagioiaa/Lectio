@@ -1,4 +1,4 @@
-"""Entry point di StudyFlow.
+"""Entry point di Lectio.
 
 Il parsing degli argomenti avviene prima di importare CustomTkinter: in questo
 modo l'helper elevato per il file hosts parte in pochi millisecondi e non
@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 
-APP_MUTEX_NAME = "Local\\StudyFlow.Desktop.SingleInstance"
+APP_MUTEX_NAME = "Local\\Lectio.Desktop.SingleInstance"
 ERROR_ALREADY_EXISTS = 183
 
 
@@ -56,7 +56,7 @@ def _acquire_single_instance() -> int | None:
     handle = kernel32.CreateMutexW(None, False, APP_MUTEX_NAME)
     if not handle:
         _message_box(
-            "StudyFlow",
+            "Lectio",
             "Impossibile inizializzare il controllo di istanza singola.",
             error=True,
         )
@@ -64,8 +64,8 @@ def _acquire_single_instance() -> int | None:
     if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
         kernel32.CloseHandle(handle)
         _message_box(
-            "StudyFlow",
-            "StudyFlow e' gia' in esecuzione.\n"
+            "Lectio",
+            "Lectio e' gia' in esecuzione.\n"
             "Chiudi la finestra esistente prima di avviarne un'altra.",
         )
         return None
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--hosts-guard" in arguments:
         return _guard_mode(arguments)
 
-    parser = argparse.ArgumentParser(prog="StudyFlow", description="Gestionale studio e analytics desktop.")
+    parser = argparse.ArgumentParser(prog="Lectio", description="Gestionale studio e analytics desktop.")
     parser.add_argument("--version", action="store_true", help="Mostra la versione ed esce.")
     parser.add_argument("--debug", action="store_true", help="Abilita log di debug.")
     parser.add_argument("--data-dir", help="Cartella dati alternativa (utile per test o modalita' portabile).")
@@ -110,19 +110,19 @@ def main(argv: list[str] | None = None) -> int:
     if options.version:
         from study_manager import __version__
 
-        version_text = f"StudyFlow {__version__}"
+        version_text = f"Lectio {__version__}"
         if getattr(sys, "frozen", False) or sys.stdout is None:
             # La build one-file usa console=False: senza console l'output di
             # --version non sarebbe visibile.
-            _message_box("StudyFlow", version_text)
+            _message_box("Lectio", version_text)
         else:
             print(version_text)
         return 0
 
     if options.data_dir:
-        os.environ["STUDYFLOW_DATA_DIR"] = str(Path(options.data_dir).expanduser().resolve())
+        os.environ["LECTIO_DATA_DIR"] = str(Path(options.data_dir).expanduser().resolve())
     elif options.smoke_test:
-        os.environ["STUDYFLOW_DATA_DIR"] = tempfile.mkdtemp(prefix="studyflow-smoke-")
+        os.environ["LECTIO_DATA_DIR"] = tempfile.mkdtemp(prefix="lectio-smoke-")
 
     logging.basicConfig(level=logging.INFO)
     mutex = _acquire_single_instance()
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError as exc:
         logging.exception("Dipendenza mancante.")
         _message_box(
-            "StudyFlow - dipendenza mancante",
+            "Lectio - dipendenza mancante",
             f"Impossibile avviare l'applicazione:\n{exc}\n\n"
             "Installa le dipendenze con:\n"
             "python -m pip install -r requirements.txt",
@@ -146,9 +146,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         logging.exception("Errore fatale all'avvio.")
         _message_box(
-            "StudyFlow - errore fatale",
+            "Lectio - errore fatale",
             f"Errore durante l'avvio:\n{exc}\n\n"
-            "Controlla il file studyflow.log nella cartella dati.",
+            "Controlla il file lectio.log nella cartella dati.",
             error=True,
         )
         return 1

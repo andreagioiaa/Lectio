@@ -1095,7 +1095,7 @@ class VideoView(ctk.CTkFrame):
             return
         if not messagebox.askyesno(
             "Rimuovere dall'archivio?",
-            f"Rimuovere '{lesson.get('title', 'Video')}' dall'archivio StudyFlow?\n\n"
+            f"Rimuovere '{lesson.get('title', 'Video')}' dall'archivio Lectio?\n\n"
             "Il file video e il file .txt non verranno cancellati dal disco.",
             parent=self.winfo_toplevel(),
         ):
@@ -1213,7 +1213,7 @@ class VideoDialog(ctk.CTkToplevel):
         ).grid(row=0, column=0, sticky="w", padx=28, pady=(24, 2))
         ctk.CTkLabel(
             self,
-            text="Il video resta nella sua posizione originale: StudyFlow archivia il percorso e la trascrizione.",
+            text="Il video resta nella sua posizione originale: Lectio archivia il percorso e la trascrizione.",
             font=font(11),
             text_color=COLORS.text_muted,
             anchor="w",

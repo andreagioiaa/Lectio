@@ -13,15 +13,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from ..config import HOSTS_BEGIN_MARKER, HOSTS_END_MARKER, HOSTS_ENTRY_IP
+from ..config import HOSTS_BEGIN_MARKER, HOSTS_END_MARKER, HOSTS_ENTRY_IP, LEGACY_HOSTS_MARKERS
 from ..utils import normalize_domain
 
 
 LOGGER = logging.getLogger(__name__)
 
+_ALL_MARKERS = ((HOSTS_BEGIN_MARKER, HOSTS_END_MARKER), *LEGACY_HOSTS_MARKERS)
+
 _MANAGED_RE = re.compile(
-    rf"(?ms)^{re.escape(HOSTS_BEGIN_MARKER)}.*?^{re.escape(HOSTS_END_MARKER)}[^\r\n]*(?:\r?\n)?"
+    "(?ms)"
+    + "|".join(
+        rf"^{re.escape(begin)}.*?^{re.escape(end)}[^\r\n]*(?:\r?\n)?" for begin, end in _ALL_MARKERS
+    )
 )
+
+
+def _contains_block(text: str) -> bool:
+    return any(begin in text and end in text for begin, end in _ALL_MARKERS)
 
 
 class HostsError(RuntimeError):
@@ -36,7 +45,7 @@ class HostsApplyResult:
 
 
 def hosts_file_path() -> Path:
-    override = os.environ.get("STUDYFLOW_HOSTS_PATH", "").strip()
+    override = os.environ.get("LECTIO_HOSTS_PATH", "").strip()
     if override:
         return Path(override).expanduser()
     if os.name == "nt":
@@ -66,7 +75,7 @@ def _read_raw(path: Path) -> tuple[str, str, bool]:
 def _write_raw(path: Path, text: str, encoding: str, has_bom: bool) -> None:
     payload = text.encode("utf-8-sig" if has_bom else encoding, errors="strict")
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=".studyflow-hosts-", suffix=".tmp", dir=str(path.parent))
+    fd, temp_name = tempfile.mkstemp(prefix=".lectio-hosts-", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
@@ -101,7 +110,7 @@ def has_managed_block(text: str | None = None) -> bool:
             text, _, _ = _read_raw(hosts_file_path())
         except HostsError:
             return False
-    return HOSTS_BEGIN_MARKER in text and HOSTS_END_MARKER in text
+    return _contains_block(text)
 
 
 def expand_domains(domains: Iterable[str]) -> list[str]:
@@ -120,7 +129,7 @@ def _build_section(domains: Iterable[str], newline: str) -> str:
     values = expand_domains(domains)
     lines = [
         HOSTS_BEGIN_MARKER,
-        "# Sezione gestita da StudyFlow. Ogni modifica manuale verra' sovrascritta.",
+        "# Sezione gestita da Lectio. Ogni modifica manuale verra' sovrascritta.",
         "# Viene rimossa automaticamente alla fine della sessione o alla chiusura dell'app.",
         "",
     ]
@@ -166,19 +175,19 @@ def restore_hosts_block(
     hosts_path: str | Path | None = None,
     flush_dns: bool = True,
 ) -> bool:
-    """Rimuove esclusivamente la sezione StudyFlow. Ritorna True se ha modificato il file."""
+    """Rimuove esclusivamente la sezione Lectio. Ritorna True se ha modificato il file."""
     del backup_path  # Il backup originale non viene mai sovrascritto automaticamente.
     path = Path(hosts_path) if hosts_path else hosts_file_path()
     if not path.exists():
         return False
     text, encoding, has_bom = _read_raw(path)
-    if HOSTS_BEGIN_MARKER not in text:
+    if not any(begin in text for begin, _ in _ALL_MARKERS):
         return False
     new_text = strip_managed_block(text)
     if new_text == text:
         return False
     _write_raw(path, new_text, encoding, has_bom)
-    LOGGER.info("Sezione StudyFlow rimossa dal file hosts.")
+    LOGGER.info("Sezione Lectio rimossa dal file hosts.")
     if flush_dns:
         flush_dns_cache()
     return True

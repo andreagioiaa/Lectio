@@ -15,13 +15,13 @@ VSVersionInfo(
         StringTable(
           '040904B0',
           [
-            StringStruct('CompanyName', 'StudyFlow'),
-            StringStruct('FileDescription', 'StudyFlow - Gestionale Studio & Analytics'),
+            StringStruct('CompanyName', 'Lectio'),
+            StringStruct('FileDescription', 'Lectio - Gestionale Studio & Analytics'),
             StringStruct('FileVersion', '1.4.2.0'),
-            StringStruct('InternalName', 'StudyFlow'),
-            StringStruct('LegalCopyright', 'StudyFlow'),
-            StringStruct('OriginalFilename', 'StudyFlow.exe'),
-            StringStruct('ProductName', 'StudyFlow'),
+            StringStruct('InternalName', 'Lectio'),
+            StringStruct('LegalCopyright', 'Lectio'),
+            StringStruct('OriginalFilename', 'Lectio.exe'),
+            StringStruct('ProductName', 'Lectio'),
             StringStruct('ProductVersion', '1.4.2.0')
           ]
         )

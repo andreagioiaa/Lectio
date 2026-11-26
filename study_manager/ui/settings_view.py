@@ -231,7 +231,7 @@ class SettingsView(ctk.CTkFrame):
         ctk.CTkLabel(
             card,
             text=(
-                "StudyFlow usa il manifest asInvoker. L'app non richiede privilegi "
+                "Lectio usa il manifest asInvoker. L'app non richiede privilegi "
                 "amministratore all'avvio: il prompt UAC compare soltanto quando deve "
                 "essere modificato il file hosts per bloccare i siti."
             ),
@@ -272,7 +272,7 @@ class SettingsView(ctk.CTkFrame):
             card,
             text=(
                 "Il file hosts non e' un firewall: browser con DNS-over-HTTPS o "
-                "estensioni VPN possono aggirarlo. StudyFlow registra comunque l'attivita' "
+                "estensioni VPN possono aggirarlo. Lectio registra comunque l'attivita' "
                 "del timer e le applicazioni rilevate."
             ),
             font=font(10),
@@ -332,7 +332,7 @@ class SettingsView(ctk.CTkFrame):
         ).grid(row=2, column=1, rowspan=2, sticky="e", padx=22)
         ctk.CTkLabel(
             card,
-            text=f"StudyFlow v{APP_VERSION} · Python + CustomTkinter + SQLite",
+            text=f"Lectio v{APP_VERSION} · Python + CustomTkinter + SQLite",
             font=font(10),
             text_color=COLORS.text_faint,
         ).grid(row=4, column=0, columnspan=2, sticky="w", padx=22, pady=(0, 18))
@@ -552,7 +552,7 @@ class SettingsView(ctk.CTkFrame):
                 "Per ogni calendario Google incolla il suo \"Indirizzo segreto in formato "
                 "iCal\" (Google Calendar dal computer > Impostazioni e condivisione > "
                 "Integra calendario). Nessun login: gli eventi vengono letti all'avvio e con "
-                "\"Sincronizza Ora\". E' in sola lettura: gli eventi creati in StudyFlow "
+                "\"Sincronizza Ora\". E' in sola lettura: gli eventi creati in Lectio "
                 "restano locali. Gli indirizzi sono cifrati e non finiscono nel backup."
             ),
             font=font(11),
@@ -948,7 +948,7 @@ class SettingsView(ctk.CTkFrame):
             if not messagebox.askyesno(
                 "Disconnettere Google Calendar?",
                 "I token verranno revocati ed eliminati da questo PC. Gli eventi gia' "
-                "sincronizzati restano in StudyFlow; le modifiche in coda verranno inviate "
+                "sincronizzati restano in Lectio; le modifiche in coda verranno inviate "
                 "quando ricolleghi l'account. Continuare?",
                 parent=self.winfo_toplevel(),
             ):
@@ -963,7 +963,7 @@ class SettingsView(ctk.CTkFrame):
                     self.db.close_current_thread()
                 self.app.post(self._render_google)
 
-            threading.Thread(target=disconnect_worker, name="StudyFlow-GoogleDisconnect", daemon=True).start()
+            threading.Thread(target=disconnect_worker, name="Lectio-GoogleDisconnect", daemon=True).start()
             return
         self._connecting = True
         self._cancel_connect = threading.Event()
@@ -982,7 +982,7 @@ class SettingsView(ctk.CTkFrame):
                 self.db.close_current_thread()
             self.app.post(lambda: self._connect_done(error))
 
-        threading.Thread(target=connect_worker, name="StudyFlow-GoogleConnect", daemon=True).start()
+        threading.Thread(target=connect_worker, name="Lectio-GoogleConnect", daemon=True).start()
 
     def _connect_done(self, error: str) -> None:
         self._connecting = False
@@ -1111,13 +1111,13 @@ class SettingsView(ctk.CTkFrame):
         self.sound_var.set(True)
 
     def _export_data(self) -> None:
-        default_name = f"StudyFlow-backup-{datetime.now():%Y%m%d-%H%M%S}.zip"
+        default_name = f"Lectio-backup-{datetime.now():%Y%m%d-%H%M%S}.zip"
         path = filedialog.asksaveasfilename(
             parent=self.winfo_toplevel(),
-            title="Esporta dati StudyFlow",
+            title="Esporta dati Lectio",
             defaultextension=".zip",
             initialfile=default_name,
-            filetypes=[("Backup StudyFlow", "*.zip"), ("Tutti i file", "*.*")],
+            filetypes=[("Backup Lectio", "*.zip"), ("Tutti i file", "*.*")],
         )
         if not path:
             return
@@ -1158,8 +1158,8 @@ class SettingsView(ctk.CTkFrame):
             return
         path = filedialog.askopenfilename(
             parent=self.winfo_toplevel(),
-            title="Importa dati StudyFlow",
-            filetypes=[("Backup StudyFlow", "*.zip"), ("Tutti i file", "*.*")],
+            title="Importa dati Lectio",
+            filetypes=[("Backup Lectio", "*.zip"), ("Tutti i file", "*.*")],
         )
         if not path:
             return

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller one-file build per StudyFlow."""
+"""PyInstaller one-file build per Lectio."""
 
 from pathlib import Path
 
@@ -98,7 +98,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="StudyFlow",
+    name="Lectio",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

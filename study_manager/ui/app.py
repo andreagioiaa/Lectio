@@ -55,13 +55,13 @@ from .widgets import render_state, set_window_icon
 LOGGER = logging.getLogger(__name__)
 
 
-class StudyFlowApp(ctk.CTk):
+class LectioApp(ctk.CTk):
     def __init__(self):
         configure_theme()
         super().__init__()
         install_text_shortcuts(self)
         self.paths = ensure_data_layout()
-        self.logger = logging.getLogger("studyflow.app")
+        self.logger = logging.getLogger("lectio.app")
         self.db = Database(self.paths["db"])
         interrupted = self.db.recover_interrupted_video_jobs()
         if interrupted:
@@ -159,7 +159,7 @@ class StudyFlowApp(ctk.CTk):
             import ctypes
 
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                "StudyFlow.Desktop.1"
+                "Lectio.Desktop.1"
             )
         except (AttributeError, OSError):
             pass
@@ -193,7 +193,7 @@ class StudyFlowApp(ctk.CTk):
 
         brand = ctk.CTkFrame(bar, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="w", padx=(18, 14))
-        ctk.CTkLabel(brand, text="StudyFlow", font=font(17, "bold"), text_color=COLORS.text, anchor="w").pack(
+        ctk.CTkLabel(brand, text="Lectio", font=font(17, "bold"), text_color=COLORS.text, anchor="w").pack(
             anchor="w"
         )
         ctk.CTkLabel(
@@ -310,7 +310,7 @@ class StudyFlowApp(ctk.CTk):
             except Exception:
                 self.logger.exception("Aggiornamento del tema non riuscito per una vista.")
         for button in self._nav_buttons.values():
-            button._studyflow_colors = None  # i colori della voce attiva vanno ricalcolati
+            button._lectio_colors = None  # i colori della voce attiva vanno ricalcolati
         try:
             self.db.set_setting("ui_theme", target)
         except Exception:
@@ -379,7 +379,7 @@ class StudyFlowApp(ctk.CTk):
         ).pack(anchor="w", pady=(10, 6))
         ctk.CTkLabel(
             frame,
-            text=f"{error}\n\nDettagli in studyflow.log.",
+            text=f"{error}\n\nDettagli in lectio.log.",
             font=font(12),
             text_color=COLORS.text_muted,
             anchor="w",
@@ -466,8 +466,8 @@ class StudyFlowApp(ctk.CTk):
                 COLORS.surface_alt if active else "transparent",
                 COLORS.accent if active else COLORS.text_muted,
             )
-            if getattr(button, "_studyflow_colors", None) != colors:
-                button._studyflow_colors = colors
+            if getattr(button, "_lectio_colors", None) != colors:
+                button._lectio_colors = colors
                 button.configure(fg_color=colors[0], text_color=colors[1])
 
     # ------------------------------------------------------------------ events
@@ -478,7 +478,7 @@ class StudyFlowApp(ctk.CTk):
             return
         ok, error = self.pomodoro.start_from_event(event)
         if not ok:
-            messagebox.showwarning("StudyFlow", error, parent=self)
+            messagebox.showwarning("Lectio", error, parent=self)
             return
         self.show_view("pomodoro")
         self.toast(f"Sessione avviata: {event.get('title', 'evento')}")
@@ -490,7 +490,7 @@ class StudyFlowApp(ctk.CTk):
             return
         ok, error = self.pomodoro.start_from_material(material)
         if not ok:
-            messagebox.showwarning("StudyFlow", error, parent=self)
+            messagebox.showwarning("Lectio", error, parent=self)
             return
         self.show_view("pomodoro")
         self.toast(f"Studio avviato: {material.get('title', 'materiale')}")
@@ -573,7 +573,7 @@ class StudyFlowApp(ctk.CTk):
             finally:
                 self.db.close_current_thread()
 
-        threading.Thread(target=worker, name="StudyFlow-GoogleCalendarCreate", daemon=True).start()
+        threading.Thread(target=worker, name="Lectio-GoogleCalendarCreate", daemon=True).start()
 
     # ------------------------------------------------------------ cartelle materia
     def subject_folder(self, subject: str, kind: str | None = None) -> Path | None:
@@ -671,7 +671,7 @@ class StudyFlowApp(ctk.CTk):
     def update_window_title(self, snapshot: dict[str, Any]) -> None:
         if snapshot["status"] in {"running", "paused"}:
             phase = PHASE_LABELS.get(snapshot["phase"], snapshot["phase"])
-            title = f"{snapshot['remaining_label']} · {phase} · {snapshot['subject']} | StudyFlow"
+            title = f"{snapshot['remaining_label']} · {phase} · {snapshot['subject']} | Lectio"
         else:
             title = APP_TITLE
         if title != self._title_signature:
@@ -858,7 +858,7 @@ class StudyFlowApp(ctk.CTk):
                 yt_version,
                 transcription_version,
             )
-            smoke_video = os.environ.get("STUDYFLOW_SMOKE_TRANSCRIBE_VIDEO", "").strip()
+            smoke_video = os.environ.get("LECTIO_SMOKE_TRANSCRIBE_VIDEO", "").strip()
             if smoke_video:
                 smoke_target = Path(self.paths["transcripts"]) / "smoke-trascrizione.txt"
                 outcome: dict[str, Any] = {}
@@ -904,7 +904,7 @@ class StudyFlowApp(ctk.CTk):
                     output,
                     result.get("blocks"),
                 )
-            smoke_url = os.environ.get("STUDYFLOW_SMOKE_YOUTUBE_URL", "").strip()
+            smoke_url = os.environ.get("LECTIO_SMOKE_YOUTUBE_URL", "").strip()
             if smoke_url:
                 from ..services.youtube_audio import download_audio, probe_video
 
@@ -976,7 +976,7 @@ class StudyFlowApp(ctk.CTk):
         try:
             messagebox.showerror(
                 "Errore imprevisto",
-                f"Si e' verificato un errore:\n{exc_value}\n\nDettagli in studyflow.log.",
+                f"Si e' verificato un errore:\n{exc_value}\n\nDettagli in lectio.log.",
                 parent=self,
             )
         except tk.TclError:
@@ -1026,7 +1026,7 @@ class StudyFlowApp(ctk.CTk):
         if pdf_view is not None and pdf_view.is_busy():
             warnings.append("L'elaborazione PDF in corso verra' interrotta.")
         if warnings and not messagebox.askyesno(
-            "Uscire da StudyFlow?",
+            "Uscire da Lectio?",
             "\n\n".join(warnings) + "\n\nUscire comunque?",
             parent=self,
         ):
@@ -1039,7 +1039,7 @@ class StudyFlowApp(ctk.CTk):
                 pass
             self._poll_job = None
         try:
-            self.title("StudyFlow - chiusura e ripristino hosts...")
+            self.title("Lectio - chiusura e ripristino hosts...")
             self.update_idletasks()
         except tk.TclError:
             pass
@@ -1104,8 +1104,8 @@ class StudyFlowApp(ctk.CTk):
 
 def run_app(debug: bool = False, smoke_test: bool = False) -> int:
     setup_logging(debug=debug)
-    LOGGER.info("Avvio StudyFlow %s", APP_VERSION)
-    app = StudyFlowApp()
+    LOGGER.info("Avvio Lectio %s", APP_VERSION)
+    app = LectioApp()
     import atexit
 
     atexit.register(app.emergency_shutdown)

@@ -1596,7 +1596,7 @@ class PdfView(ctk.CTkFrame):
         self._commit_editor()
         if not self._sync_block(doc, status="closed"):
             messagebox.showerror(
-                "PDF e Slide", "Salvataggio del capitolo non riuscito: dettagli in studyflow.log.", parent=self
+                "PDF e Slide", "Salvataggio del capitolo non riuscito: dettagli in lectio.log.", parent=self
             )
             return
         self._remove_current_doc()
@@ -3129,7 +3129,7 @@ class PdfView(ctk.CTkFrame):
             self._edit_job = None
             self._after_edit()
         if not self._save_draft():
-            self._flash_note("Salvataggio non riuscito: dettagli in studyflow.log.", COLORS.red)
+            self._flash_note("Salvataggio non riuscito: dettagli in lectio.log.", COLORS.red)
             return
         message = f"✓ Salvato «{doc.path.name}» alle {time.strftime('%H:%M:%S')}"
         self._set_status(message)

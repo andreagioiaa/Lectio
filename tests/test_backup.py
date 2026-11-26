@@ -70,7 +70,7 @@ class BackupTests(unittest.TestCase):
             self.assertIn("transcripts/lezione.txt", archive.namelist())
 
         manifest, payload = inspect_backup(target)
-        self.assertEqual(manifest["format"], "studyflow-backup")
+        self.assertEqual(manifest["format"], "lectio-backup")
         self.assertEqual(payload["tables"]["flashcards"][0]["front"], "Che cos'e' la cellula?")
 
         # Modifica i dati attuali: l'importazione deve riportarli al backup.
@@ -108,7 +108,7 @@ class BackupTests(unittest.TestCase):
                 "manifest.json",
                 json.dumps(
                     {
-                        "format": "studyflow-backup",
+                        "format": "lectio-backup",
                         "backup_version": 1,
                         "schema_version": 999,
                     }

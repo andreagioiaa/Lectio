@@ -12,7 +12,7 @@ from .paths import ensure_data_layout
 
 _CONFIGURED = False
 
-# Token e segreti OAuth Google che non devono mai finire in studyflow.log.
+# Token e segreti OAuth Google che non devono mai finire in lectio.log.
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"ya29\.[0-9A-Za-z_\-\.]+"), "ya29.***"),  # access token
     (re.compile(r"1//[0-9A-Za-z_\-]{10,}"), "1//***"),  # refresh token

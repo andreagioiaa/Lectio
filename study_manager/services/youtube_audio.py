@@ -154,7 +154,7 @@ def _unique_destination(sounds_dir: Path, title: str) -> Path:
 def find_ffmpeg(sounds_dir: Path) -> Path | None:
     """Cerca FFmpeg nel PATH, nella cartella dati o accanto all'eseguibile."""
     candidates: list[Path] = []
-    configured = os.environ.get("STUDYFLOW_FFMPEG", "").strip()
+    configured = os.environ.get("LECTIO_FFMPEG", "").strip()
     if configured:
         path = Path(configured).expanduser()
         candidates.append(path / "ffmpeg.exe" if path.is_dir() else path)
@@ -302,7 +302,7 @@ def download_audio(
     if ffmpeg is None:
         raise FFmpegMissingError(
             "FFmpeg non trovato. Installalo con 'winget install Gyan.FFmpeg' "
-            "oppure copia ffmpeg.exe nella cartella dati di StudyFlow."
+            "oppure copia ffmpeg.exe nella cartella dati di Lectio."
         )
     YoutubeDL = _import_ytdlp()
     sounds_dir = Path(sounds_dir)

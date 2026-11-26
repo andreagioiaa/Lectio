@@ -117,7 +117,7 @@ def _no_window_flags() -> int:
 
 def find_tesseract() -> str | None:
     candidates = [
-        os.environ.get("STUDYFLOW_TESSERACT", ""),
+        os.environ.get("LECTIO_TESSERACT", ""),
         str(app_data_dir() / "tesseract" / ("tesseract.exe" if os.name == "nt" else "tesseract")),
     ]
     if os.name == "nt":
@@ -1063,7 +1063,7 @@ def run_math_engine(
     if _template_executable(template) is None:
         raise PdfToolsError(f"{ENGINE_LABELS.get(engine, engine)} non trovato: controlla il comando configurato.")
     results: dict[int, str] = {}
-    with tempfile.TemporaryDirectory(prefix="studyflow-pdf-") as temp:
+    with tempfile.TemporaryDirectory(prefix="lectio-pdf-") as temp:
         input_dir = Path(temp) / "input"
         output_dir = Path(temp) / "output"
         input_dir.mkdir()
@@ -1105,7 +1105,7 @@ def run_math_engine(
                 if progress is not None:
                     progress(line[-120:])
 
-        thread = threading.Thread(target=reader, name=f"studyflow-{engine}-output", daemon=True)
+        thread = threading.Thread(target=reader, name=f"lectio-{engine}-output", daemon=True)
         thread.start()
         while process.poll() is None:
             if cancel is not None and cancel.wait(0.25):
@@ -1191,7 +1191,7 @@ def convert_pdf(
                 lines = _pdfplumber_page(page, index + 1, options.detect_math)
                 if _needs_ocr(lines, options):
                     if ocr_ok:
-                        with tempfile.TemporaryDirectory(prefix="studyflow-ocr-") as temp:
+                        with tempfile.TemporaryDirectory(prefix="lectio-ocr-") as temp:
                             image = Path(temp) / "page.png"
                             page.to_image(resolution=options.ocr_dpi).save(str(image))
                             lines = ocr_page_image(image, lines, options, 72.0 / options.ocr_dpi)
@@ -1221,7 +1221,7 @@ def convert_pdf(
                 lines = _pymupdf_page(page, index + 1, options.detect_math)
                 if _needs_ocr(lines, options):
                     if ocr_ok:
-                        with tempfile.TemporaryDirectory(prefix="studyflow-ocr-") as temp:
+                        with tempfile.TemporaryDirectory(prefix="lectio-ocr-") as temp:
                             image = Path(temp) / "page.png"
                             pixmap = page.get_pixmap(dpi=options.ocr_dpi)
                             pixmap.save(str(image))

@@ -1,4 +1,4 @@
-"""Persistenza SQLite thread-safe per StudyFlow."""
+"""Persistenza SQLite thread-safe per Lectio."""
 
 from __future__ import annotations
 
@@ -2079,7 +2079,7 @@ class Database:
         location: str | None = None,
         google_connected: bool = True,
     ) -> int:
-        """Crea o modifica un evento da StudyFlow e lo accoda verso Google.
+        """Crea o modifica un evento da Lectio e lo accoda verso Google.
 
         Transizioni di ``source``:
 
@@ -2128,7 +2128,7 @@ class Database:
                     "google_calendar_id, color_hex, color_id) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
                     (
-                        f"studyflow-local-{uuid.uuid4().hex}",
+                        f"lectio-local-{uuid.uuid4().hex}",
                         values["title"],
                         values["subject"],
                         values["start"],
@@ -2203,7 +2203,7 @@ class Database:
         return int(event_id)
 
     def delete_local_event(self, event_id: int) -> str:
-        """Elimina un evento da StudyFlow.
+        """Elimina un evento da Lectio.
 
         Gli eventi presenti su Google diventano tombstone ``google_pending_delete``
         (spariscono subito dall'agenda); gli altri vengono rimossi. In entrambi
@@ -2304,8 +2304,8 @@ class Database:
                 connection.execute(
                     "UPDATE calendar_events SET source = ?, google_event_id = ?, "
                     "google_calendar_id = ?, previous_google_calendar_id = NULL, "
-                    "sync_error = '', uid = CASE WHEN uid LIKE 'studyflow-local-%' "
-                    "THEN ? ELSE uid END WHERE id = ?",
+                    "sync_error = '', uid = CASE WHEN uid LIKE 'lectio-local-%' "
+                    "OR uid LIKE 'studyflow-local-%' THEN ? ELSE uid END WHERE id = ?",
                     (
                         EVENT_SOURCE_GOOGLE,
                         str(google_event_id),

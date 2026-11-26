@@ -1,4 +1,4 @@
-# StudyFlow - build automatica dell'eseguibile one-file.
+# Lectio - build automatica dell'eseguibile one-file.
 # Uso:  .\build.ps1
 #       .\build.ps1 -SkipTests
 
@@ -19,7 +19,7 @@ try {
     $venvPath = Join-Path $PSScriptRoot ".venv"
     $venvPython = Join-Path $venvPath "Scripts\python.exe"
 
-    Write-Host "== StudyFlow build ==" -ForegroundColor Cyan
+    Write-Host "== Lectio build ==" -ForegroundColor Cyan
 
     if (-not (Test-Path $venvPython)) {
         Write-Host "Creo il virtual environment con Python 3.12..." -ForegroundColor Yellow
@@ -62,18 +62,18 @@ try {
     }
 
     Write-Host "Compilazione con PyInstaller..." -ForegroundColor Yellow
-    & $venvPython -m PyInstaller --noconfirm --clean StudyFlow.spec
+    & $venvPython -m PyInstaller --noconfirm --clean Lectio.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller ha restituito un errore."
     }
 
-    $exe = Join-Path $PSScriptRoot "dist\StudyFlow.exe"
+    $exe = Join-Path $PSScriptRoot "dist\Lectio.exe"
     if (-not (Test-Path $exe)) {
-        throw "Build terminata ma dist\StudyFlow.exe non esiste."
+        throw "Build terminata ma dist\Lectio.exe non esiste."
     }
 
     # Pandoc per l'esportazione Word: copiato accanto all'exe (non dentro, per non
-    # estrarre ~150 MB a ogni avvio). StudyFlow lo cerca in quella cartella.
+    # estrarre ~150 MB a ogni avvio). Lectio lo cerca in quella cartella.
     $ErrorActionPreference = "Continue"
     $pandocSrc = & $venvPython -c "import pypandoc; print(pypandoc.get_pandoc_path())" 2>$null
     $pandocExit = $LASTEXITCODE

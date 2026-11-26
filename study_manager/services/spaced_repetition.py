@@ -17,7 +17,7 @@ Regole principali:
   di 100 anni.
 
 Le date sono memorizzate come testo locale ``YYYY-MM-DD HH:MM:SS`` per restare
-coerenti con il resto del database SQLite di StudyFlow.
+coerenti con il resto del database SQLite di Lectio.
 """
 
 from __future__ import annotations

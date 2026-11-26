@@ -608,7 +608,7 @@ class PdfViewerWindow(ctk.CTkToplevel):
         super().__init__(master)
         self.app = app
         self._key = str(path.resolve()).lower()
-        self.title(f"{path.name} — StudyFlow")
+        self.title(f"{path.name} — Lectio")
         self.configure(fg_color=COLORS.bg)
         self.minsize(520, 420)
         try:

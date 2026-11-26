@@ -344,7 +344,7 @@ class PomodoroView(ctk.CTkFrame):
         subject = self.subject_entry.get().strip() or "Studio"
         ok, error = self.pomodoro.start_current(subject=subject)
         if not ok:
-            messagebox.showwarning("StudyFlow", error, parent=self.winfo_toplevel())
+            messagebox.showwarning("Lectio", error, parent=self.winfo_toplevel())
         self._refresh_now()
 
     def _toggle_pause(self) -> None:

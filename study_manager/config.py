@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_NAME = "StudyFlow"
-APP_TITLE = "StudyFlow - Gestionale Studio & Analytics"
+APP_NAME = "Lectio"
+APP_TITLE = "Lectio - Gestionale Studio & Analytics"
 APP_VERSION = "1.4.2"
 
 DEFAULT_SETTINGS: dict[str, str] = {
@@ -75,8 +75,12 @@ DEFAULT_BLOCKED_APPS: tuple[tuple[str, str], ...] = (
     ("TikTok", "tiktok"),
 )
 
-HOSTS_BEGIN_MARKER = "# >>> STUDYFLOW MANAGED BLOCK - DO NOT EDIT >>>"
-HOSTS_END_MARKER = "# <<< STUDYFLOW MANAGED BLOCK <<<"
+HOSTS_BEGIN_MARKER = "# >>> LECTIO MANAGED BLOCK - DO NOT EDIT >>>"
+HOSTS_END_MARKER = "# <<< LECTIO MANAGED BLOCK <<<"
+# Marcatori usati prima del cambio nome: una sezione residua va comunque rimossa.
+LEGACY_HOSTS_MARKERS: tuple[tuple[str, str], ...] = (
+    ("# >>> STUDYFLOW MANAGED BLOCK - DO NOT EDIT >>>", "# <<< STUDYFLOW MANAGED BLOCK <<<"),
+)
 HOSTS_ENTRY_IP = "127.0.0.1"
 
 TRAP_PORTS: tuple[int, ...] = (80, 443)

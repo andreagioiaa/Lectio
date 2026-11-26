@@ -698,7 +698,7 @@ class ICalFeedTests(unittest.TestCase):
         event = self._events()[0]
         self.assertEqual(event["subject"], "Lezione")  # fallback sul titolo, come l'import .ics
 
-        # Nuovo evento in StudyFlow: resta locale (nessuna API).
+        # Nuovo evento in Lectio: resta locale (nessuna API).
         local_id = self.db.save_local_event(
             None, "Ripasso", "Sistemi Operativi", self.day, self.day + timedelta(hours=1),
             google_connected=False,

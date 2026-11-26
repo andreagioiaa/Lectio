@@ -2,7 +2,7 @@
 
 Ogni materia ha una cartella nella radice di funzionamento dell'app
 (``<root>/Materie/<Nome materia>``) con sottocartelle dedicate ai materiali
-generati da StudyFlow:
+generati da Lectio:
 
 * ``Trascrizioni`` - i .txt prodotti dalle videolezioni;
 * ``Appunti``      - TXT/LaTeX/Word esportati dal modulo PDF e Slide;

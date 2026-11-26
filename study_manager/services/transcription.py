@@ -349,7 +349,7 @@ def extract_audio(
                 lines.put(None)
 
         reader_thread = threading.Thread(
-            target=reader, name="StudyFlow-FFmpegOutput", daemon=True
+            target=reader, name="Lectio-FFmpegOutput", daemon=True
         )
         reader_thread.start()
         last_percent = 0.0
@@ -447,7 +447,7 @@ def ensure_model(
             url,
             stream=True,
             timeout=(20, 120),
-            headers={"User-Agent": "StudyFlow/1.2 (desktop transcription)"},
+            headers={"User-Agent": "Lectio/1.2 (desktop transcription)"},
         ) as response:
             response.raise_for_status()
             total = int(response.headers.get("Content-Length") or expected)
@@ -513,7 +513,7 @@ def build_transcript_text(
     video_name = Path(video_path).name
     language_text = LANGUAGE_LABELS.get(language, language or "Rilevamento automatico")
     header = [
-        "# StudyFlow - Trascrizione videolezione",
+        "# Lectio - Trascrizione videolezione",
         f"# Titolo: {title.strip() or Path(video_path).stem}",
         f"# Video: {video_name}",
         f"# Materia: {subject.strip() or 'Senza materia'}",
@@ -567,7 +567,7 @@ def _run_whisper(
     except Exception as exc:
         raise TranscriptionError(
             "Motore di trascrizione non disponibile. "
-            "Reinstalla StudyFlow o le dipendenze del progetto."
+            "Reinstalla Lectio o le dipendenze del progetto."
         ) from exc
 
     threads = max(1, min(4, os.cpu_count() or 4))
@@ -668,7 +668,7 @@ def transcribe_media(
         raise FFmpegMissingError(
             "FFmpeg non trovato. La trascrizione richiede FFmpeg: installalo con "
             "'winget install Gyan.FFmpeg' oppure copia ffmpeg.exe nella cartella "
-            "dati di StudyFlow."
+            "dati di Lectio."
         )
 
     def emit(
@@ -712,7 +712,7 @@ def transcribe_media(
     emit("model", 1.0, "Modello pronto.")
 
     source_duration = probe_media_duration(ffmpeg, video)
-    with tempfile.TemporaryDirectory(prefix="studyflow-transcribe-") as folder:
+    with tempfile.TemporaryDirectory(prefix="lectio-transcribe-") as folder:
         wav_path = Path(folder) / "audio.wav"
         emit("extract", 0.0, "Estrazione audio con FFmpeg...")
         extract_audio(
@@ -939,7 +939,7 @@ class TranscriptionController:
             process = self._ctx.Process(
                 target=_transcription_process,
                 args=(payload, event_queue, cancel),
-                name=f"StudyFlow-Transcribe-{job_id}",
+                name=f"Lectio-Transcribe-{job_id}",
                 daemon=True,
             )
             self._active_job = {
@@ -976,7 +976,7 @@ class TranscriptionController:
             self._monitor = threading.Thread(
                 target=self._monitor_process,
                 args=(job_id, process, event_queue, cancel),
-                name=f"StudyFlow-TranscribeMonitor-{job_id}",
+                name=f"Lectio-TranscribeMonitor-{job_id}",
                 daemon=True,
             )
             self._monitor.start()

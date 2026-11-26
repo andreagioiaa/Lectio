@@ -1,13 +1,13 @@
-"""Sincronizzazione bidirezionale StudyFlow <-> Google Calendar (REST API v3).
+"""Sincronizzazione bidirezionale Lectio <-> Google Calendar (REST API v3).
 
 Ogni sincronizzazione esegue, sotto un unico ``threading.Lock``:
 
 1. ``calendarList`` + ``colors``: calendari, colori e abbinamento automatico
    calendario -> materia per nome (case-insensitive);
-2. **flush della coda locale** (StudyFlow -> Google): ``google_pending_create``
+2. **flush della coda locale** (Lectio -> Google): ``google_pending_create``
    (POST), ``google_pending_update`` (``move`` se il calendario e' cambiato, poi
    PATCH), ``google_pending_delete`` (DELETE; il tombstone sparisce su 204/410);
-3. **pull** (Google -> StudyFlow) per ogni calendario abilitato nella finestra
+3. **pull** (Google -> Lectio) per ogni calendario abilitato nella finestra
    ``-past_days`` / ``+future_days``: upsert su ``(google_calendar_id,
    google_event_id)`` senza toccare le modifiche locali ancora in coda, poi
    **cancellazione speculare** degli eventi spariti da Google (sessioni e
@@ -595,7 +595,7 @@ class CalendarSyncService:
             raise GoogleApiError(500, "Google non ha restituito l'id dell'evento.")
         outcome = self.db.mark_event_synced(int(event["id"]), google_event_id, calendar_id, revision)
         if outcome == "missing":
-            # Eliminato in StudyFlow mentre veniva creato: niente orfani su Google.
+            # Eliminato in Lectio mentre veniva creato: niente orfani su Google.
             self.client.delete_event(calendar_id, google_event_id)
 
     def _push_update(self, event: dict[str, Any], revision: int) -> None:
@@ -752,7 +752,7 @@ class CalendarSyncService:
                 self.db.close_current_thread()
             self._notify("sync_finished", result=result, error=error, reason=reason)
 
-        threading.Thread(target=worker, name="StudyFlow-GoogleSync", daemon=True).start()
+        threading.Thread(target=worker, name="Lectio-GoogleSync", daemon=True).start()
         return True
 
     def request_flush(self) -> None:
@@ -764,7 +764,7 @@ class CalendarSyncService:
             if self._flush_thread is not None:
                 return  # il worker attivo vedra' la nuova richiesta
             self._flush_thread = threading.Thread(
-                target=self._flush_worker, name="StudyFlow-GoogleFlush", daemon=True
+                target=self._flush_worker, name="Lectio-GoogleFlush", daemon=True
             )
             self._flush_thread.start()
 

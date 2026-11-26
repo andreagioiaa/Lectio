@@ -92,7 +92,7 @@ def _resolve_target(widget, units: int, shift: bool):
     for node in _iter_ancestors(widget):
         if _owns_wheel(node, units):
             return None
-        frame = getattr(node, "_studyflow_frame", None)
+        frame = getattr(node, "_lectio_frame", None)
         if frame is not None:
             node = frame
         if not isinstance(node, ctk.CTkScrollableFrame):
@@ -125,7 +125,7 @@ def _mouse_wheel_all(self, event) -> None:
 def install_smooth_scrolling() -> None:
     """Sostituisce l'handler della rotella di CustomTkinter (una sola volta)."""
     frame_class = ctk.CTkScrollableFrame
-    if getattr(frame_class, "_studyflow_smooth_scrolling", False):
+    if getattr(frame_class, "_lectio_smooth_scrolling", False):
         return
     original_init = frame_class.__init__
 
@@ -135,10 +135,10 @@ def install_smooth_scrolling() -> None:
         # quando il puntatore si trova su uno spazio vuoto della vista.
         for widget in (self._parent_canvas, self._parent_frame, self._scrollbar):
             try:
-                widget._studyflow_frame = self
+                widget._lectio_frame = self
             except Exception:
                 pass
 
     frame_class.__init__ = _init
     frame_class._mouse_wheel_all = _mouse_wheel_all
-    frame_class._studyflow_smooth_scrolling = True
+    frame_class._lectio_smooth_scrolling = True

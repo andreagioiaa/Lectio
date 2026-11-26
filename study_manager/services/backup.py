@@ -1,4 +1,4 @@
-"""Esportazione e importazione completa dei dati StudyFlow.
+"""Esportazione e importazione completa dei dati Lectio.
 
 Il backup e' un archivio ZIP portabile che contiene:
 
@@ -24,7 +24,9 @@ from ..database import DATA_TABLES, SCHEMA_VERSION, Database
 from ..utils import now_str
 
 
-BACKUP_FORMAT = "studyflow-backup"
+BACKUP_FORMAT = "lectio-backup"
+# Backup creati prima del cambio nome restano importabili.
+LEGACY_BACKUP_FORMATS = {"studyflow-backup"}
 BACKUP_VERSION = 1
 BACKUP_EXTENSION = ".zip"
 MANIFEST_NAME = "manifest.json"
@@ -135,7 +137,7 @@ def inspect_backup(source: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
             names = set(archive.namelist())
             if MANIFEST_NAME not in names or DATA_NAME not in names:
                 raise BackupError(
-                    "Il file non e' un backup StudyFlow valido: mancano i metadati."
+                    "Il file non e' un backup Lectio valido: mancano i metadati."
                 )
             manifest = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
             payload = json.loads(archive.read(DATA_NAME).decode("utf-8"))
@@ -143,18 +145,18 @@ def inspect_backup(source: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
         raise
     except (OSError, ValueError, KeyError, zipfile.BadZipFile) as exc:
         raise BackupError(f"Backup non leggibile: {exc}") from exc
-    if not isinstance(manifest, dict) or manifest.get("format") != BACKUP_FORMAT:
-        raise BackupError("Il file non e' un backup StudyFlow.")
+    if not isinstance(manifest, dict) or manifest.get("format") not in {BACKUP_FORMAT, *LEGACY_BACKUP_FORMATS}:
+        raise BackupError("Il file non e' un backup Lectio.")
     version = int(manifest.get("backup_version", 0) or 0)
     if version > BACKUP_VERSION:
         raise BackupError(
-            "Il backup e' stato creato da una versione piu' recente di StudyFlow."
+            "Il backup e' stato creato da una versione piu' recente di Lectio."
         )
     schema_version = int(manifest.get("schema_version", 0) or 0)
     if schema_version > SCHEMA_VERSION:
         raise BackupError(
             "Il backup usa uno schema dati piu' recente e non puo' essere importato "
-            "da questa versione di StudyFlow."
+            "da questa versione di Lectio."
         )
     tables = payload.get("tables") if isinstance(payload, dict) else None
     if not isinstance(tables, dict):

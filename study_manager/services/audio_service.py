@@ -281,7 +281,7 @@ def generate_focus_sound(
     brown = 0.0
     low = 0.0
     droplet = 0.0
-    randomizer = random.Random(f"studyflow-{kind}")
+    randomizer = random.Random(f"lectio-{kind}")
     for index in range(total):
         white = randomizer.uniform(-1.0, 1.0)
         brown = max(-1.0, min(1.0, brown * 0.997 + white * 0.02))

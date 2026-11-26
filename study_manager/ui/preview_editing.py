@@ -40,7 +40,7 @@ def escape_for_source(text: str, fmt: str, verbatim: bool = False) -> str:
         return text
     if fmt == "latex":
         return "".join(_LATEX_ESCAPES.get(char, char) for char in text)
-    # Nel Markdown di StudyFlow l'unico escape e' il dollaro (le formule sono $...$).
+    # Nel Markdown di Lectio l'unico escape e' il dollaro (le formule sono $...$).
     return text.replace("$", "\\$")
 
 

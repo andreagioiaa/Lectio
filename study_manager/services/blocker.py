@@ -63,7 +63,7 @@ class BlockerController:
             "explorer",
             "dwm",
             "fontdrvhost",
-            "studyflow",
+            "lectio",
         }
         try:
             own_name = normalize_process_name(Path(sys.executable).name)
@@ -76,7 +76,7 @@ class BlockerController:
         self._reload_runtime_config()
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
-            name="StudyFlow-Heartbeat",
+            name="Lectio-Heartbeat",
             daemon=True,
         )
         self._heartbeat_thread.start()
@@ -138,7 +138,7 @@ class BlockerController:
                 self._sites_thread = threading.Thread(
                     target=self._sites_worker,
                     args=(domains,),
-                    name="StudyFlow-SiteBlockerReload",
+                    name="Lectio-SiteBlockerReload",
                     daemon=True,
                 )
                 self._sites_thread.start()
@@ -173,7 +173,7 @@ class BlockerController:
             self._monitor_thread = threading.Thread(
                 target=self._monitor_loop,
                 args=(self._monitor_stop,),
-                name="StudyFlow-ProcessMonitor",
+                name="Lectio-ProcessMonitor",
                 daemon=True,
             )
             self._monitor_thread.start()
@@ -181,7 +181,7 @@ class BlockerController:
             self._sites_thread = threading.Thread(
                 target=self._sites_worker,
                 args=(domains,),
-                name="StudyFlow-SiteBlocker",
+                name="Lectio-SiteBlocker",
                 daemon=True,
             )
             self._sites_thread.start()
@@ -265,7 +265,7 @@ class BlockerController:
             self._sites_thread = threading.Thread(
                 target=self._sites_worker,
                 args=(domains,),
-                name="StudyFlow-SiteBlockerRetry",
+                name="Lectio-SiteBlockerRetry",
                 daemon=True,
             )
             self._sites_thread.start()

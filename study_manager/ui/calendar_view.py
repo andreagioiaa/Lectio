@@ -614,7 +614,7 @@ class CalendarView(ctk.CTkFrame):
                 # restare registrata dopo la fine dell'importazione.
                 self.db.close_current_thread()
 
-        threading.Thread(target=worker, name="StudyFlow-ICSImport", daemon=True).start()
+        threading.Thread(target=worker, name="Lectio-ICSImport", daemon=True).start()
 
     def _import_done(self, result: dict | None, error: str) -> None:
         if not self.winfo_exists():
@@ -643,7 +643,7 @@ class CalendarView(ctk.CTkFrame):
     def _clear_events(self) -> None:
         if not messagebox.askyesno(
             "Svuotare il calendario?",
-            "Tutti gli eventi verranno rimossi da StudyFlow (non da Google: gli eventi "
+            "Tutti gli eventi verranno rimossi da Lectio (non da Google: gli eventi "
             "sincronizzati torneranno alla prossima sincronizzazione). I materiali e le "
             "sessioni resteranno, ma perderanno il collegamento all'evento. Continuare?",
             parent=self.winfo_toplevel(),
@@ -723,14 +723,14 @@ class EventDialog(ctk.CTkToplevel):
         if self.event.get("source") == EVENT_SOURCE_ICAL:
             return (
                 "Evento letto da un indirizzo iCal (sola lettura): modificalo su Google "
-                "Calendar, StudyFlow lo aggiornera' alla prossima sincronizzazione."
+                "Calendar, Lectio lo aggiornera' alla prossima sincronizzazione."
             )
         calendar_id = self.event.get("google_calendar_id")
         if calendar_id and not self.sync.is_calendar_writable(calendar_id):
             info = self.sync.calendar_info(calendar_id) or {}
             return (
                 f"Il calendario Google \"{info.get('summary', calendar_id)}\" e' in sola "
-                "lettura: l'evento non puo' essere modificato da StudyFlow."
+                "lettura: l'evento non puo' essere modificato da Lectio."
             )
         return ""
 
@@ -768,7 +768,7 @@ class EventDialog(ctk.CTkToplevel):
         info = (
             self.readonly_reason
             or (
-                "Evento importato da file .ics: le modifiche restano solo in StudyFlow e "
+                "Evento importato da file .ics: le modifiche restano solo in Lectio e "
                 "una nuova importazione dello stesso file puo' sovrascriverle."
                 if self.event and self.event.get("source") == EVENT_SOURCE_ICS
                 else "La materia sceglie il calendario Google di destinazione e il colore."
@@ -976,20 +976,20 @@ class EventDialog(ctk.CTkToplevel):
         feed = self.sync.ical.for_subject(subject)
         if feed is not None and not (calendar_id and self.sync.is_connected()):
             text = (
-                "Solo in StudyFlow: il calendario Google della materia e' collegato "
+                "Solo in Lectio: il calendario Google della materia e' collegato "
                 "tramite indirizzo iCal (sola lettura)."
             )
         elif calendar_id and self.sync.is_connected():
             info = self.sync.calendar_info(calendar_id) or {}
             text = f"Calendario Google di destinazione: {info.get('summary', calendar_id)}"
             if not self.sync.is_calendar_writable(calendar_id):
-                text += " (sola lettura: l'evento restera' solo in StudyFlow)"
+                text += " (sola lettura: l'evento restera' solo in Lectio)"
         elif calendar_id:
             text = "Materia collegata a Google: l'evento verra' inviato quando ricolleghi l'account."
         elif self.event and self.event.get("google_calendar_id"):
             text = "Materia senza calendario Google: l'evento resta nel calendario attuale."
         else:
-            text = "Solo in StudyFlow: la materia non ha un calendario Google collegato."
+            text = "Solo in Lectio: la materia non ha un calendario Google collegato."
         self.destination_label.configure(text=text)
         self._refresh_swatches()
 
@@ -1103,9 +1103,9 @@ class EventDialog(ctk.CTkToplevel):
         if not messagebox.askyesno(
             "Eliminare l'evento?",
             (
-                "L'evento verra' eliminato da StudyFlow e da Google Calendar. "
+                "L'evento verra' eliminato da Lectio e da Google Calendar. "
                 if on_google
-                else "L'evento verra' eliminato da StudyFlow. "
+                else "L'evento verra' eliminato da Lectio. "
             )
             + "Sessioni e materiali collegati restano, senza collegamento. Continuare?",
             parent=self,

@@ -336,7 +336,7 @@ class BlockerView(ctk.CTkFrame):
         ctk.CTkLabel(
             card,
             text=(
-                "StudyFlow salva un backup del file hosts originale in %LOCALAPPDATA%\\StudyFlow. "
+                "Lectio salva un backup del file hosts originale in %LOCALAPPDATA%\\Lectio. "
                 "La sezione gestita viene rimossa automaticamente; il resto del file non viene "
                 "mai sovrascritto. Se un crash lascia una sezione residua, usa il pulsante qui a destra."
             ),
@@ -582,7 +582,7 @@ class BlockerView(ctk.CTkFrame):
 
             self.app.post(show_result)
 
-        threading.Thread(target=worker, name="StudyFlow-HostsRestore", daemon=True).start()
+        threading.Thread(target=worker, name="Lectio-HostsRestore", daemon=True).start()
 
     # ------------------------------------------------------------------ status
     def _start_poll(self) -> None:
@@ -664,7 +664,7 @@ class BlockerView(ctk.CTkFrame):
         if status["hosts_residual"]:
             self.residual_label.configure(
                 text=(
-                    "ATTENZIONE: e' presente una sezione StudyFlow residua nel file hosts. "
+                    "ATTENZIONE: e' presente una sezione Lectio residua nel file hosts. "
                     "Usa 'Ripristina file hosts' per pulirla."
                 ),
                 text_color=COLORS.amber,

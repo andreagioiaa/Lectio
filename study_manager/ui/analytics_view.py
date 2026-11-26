@@ -386,7 +386,7 @@ class AnalyticsView(ctk.CTkFrame):
 
         threading.Thread(
             target=worker,
-            name="StudyFlow-MatplotlibInit",
+            name="Lectio-MatplotlibInit",
             daemon=True,
         ).start()
 

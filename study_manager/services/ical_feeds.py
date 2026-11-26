@@ -1,7 +1,7 @@
 """Calendari in sola lettura tramite indirizzo iCal (nessuna API, nessun login).
 
 Ogni "feed" e' l'URL di un file ``.ics`` sempre aggiornato, per esempio
-l'"Indirizzo segreto in formato iCal" di un calendario Google. StudyFlow lo
+l'"Indirizzo segreto in formato iCal" di un calendario Google. Lectio lo
 scarica a ogni sincronizzazione, lo legge con lo stesso parser dell'import
 ``.ics`` e applica upsert + cancellazione speculare sugli eventi del feed.
 
@@ -101,7 +101,7 @@ def default_fetch(url: str) -> bytes:
             url,
             timeout=HTTP_TIMEOUT,
             stream=True,
-            headers={"User-Agent": "StudyFlow-Desktop", "Accept": "text/calendar, */*"},
+            headers={"User-Agent": "Lectio-Desktop", "Accept": "text/calendar, */*"},
         )
     except Exception as exc:
         if _is_network_error(exc):

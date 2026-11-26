@@ -136,7 +136,7 @@ class WebTrap:
                 thread = threading.Thread(
                     target=self._listen,
                     args=(port,),
-                    name=f"StudyFlow-WebTrap-{port}",
+                    name=f"Lectio-WebTrap-{port}",
                     daemon=True,
                 )
                 thread.start()
@@ -204,7 +204,7 @@ class WebTrap:
                 threading.Thread(
                     target=self._handle_connection,
                     args=(connection, port),
-                    name=f"StudyFlow-WebTrap-{port}-client",
+                    name=f"Lectio-WebTrap-{port}-client",
                     daemon=True,
                 ).start()
         except OSError as exc:

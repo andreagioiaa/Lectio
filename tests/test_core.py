@@ -140,7 +140,7 @@ class GuardClientTests(unittest.TestCase):
                 encoding="utf-8",
             )
             env = dict(os.environ)
-            env["STUDYFLOW_HOSTS_PATH"] = str(hosts)
+            env["LECTIO_HOSTS_PATH"] = str(hosts)
             script = Path(__file__).resolve().parents[1] / "main.py"
             process = subprocess.Popen(
                 [
@@ -204,7 +204,7 @@ class GuardClientTests(unittest.TestCase):
             hosts = root / "hosts"
             hosts.write_text("127.0.0.1 localhost\r\n", encoding="utf-8", newline="")
             client = GuardClient(root / "control.json", root / "status.json", root / "guard.log")
-            with patch.dict(os.environ, {"STUDYFLOW_HOSTS_PATH": str(hosts)}):
+            with patch.dict(os.environ, {"LECTIO_HOSTS_PATH": str(hosts)}):
                 with patch(
                     "study_manager.services.guard_client.launch_elevated",
                     return_value=True,

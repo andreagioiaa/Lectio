@@ -84,7 +84,7 @@ class PomodoroEngine:
 
         self._thread = threading.Thread(
             target=self._timer_loop,
-            name="StudyFlow-Pomodoro",
+            name="Lectio-Pomodoro",
             daemon=True,
         )
         self._thread.start()

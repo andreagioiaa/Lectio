@@ -4,7 +4,7 @@ Flusso, solo standard library + ``requests``:
 
 1. l'utente carica il ``credentials.json`` (client OAuth di tipo "App desktop")
    scaricato dalla Google Cloud Console;
-2. StudyFlow apre un ``http.server`` su ``127.0.0.1`` con porta effimera, genera
+2. Lectio apre un ``http.server`` su ``127.0.0.1`` con porta effimera, genera
    ``code_verifier``/``code_challenge`` (S256) e un ``state`` casuale, poi apre il
    browser sulla pagina di consenso Google;
 3. Google reindirizza al loopback con il codice, che viene scambiato con
@@ -47,6 +47,8 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 REVOKE_URI = "https://oauth2.googleapis.com/revoke"
 HTTP_TIMEOUT = (8, 25)
 _EXPIRY_MARGIN = timedelta(seconds=90)
+# Valore storico (nome precedente dell'app): NON cambiarlo, altrimenti i token
+# gia' cifrati con DPAPI non sarebbero piu' decifrabili.
 _DPAPI_ENTROPY = b"StudyFlow.GoogleCalendar.v1"
 
 SETTING_CLIENT_ID = "google_client_id"
@@ -101,7 +103,7 @@ def protect_secret(value: str) -> str:
     CRYPTPROTECT_UI_FORBIDDEN = 0x01
     ok = ctypes.windll.crypt32.CryptProtectData(
         ctypes.byref(data_in),
-        "StudyFlow",
+        "Lectio",
         ctypes.byref(entropy),
         None,
         None,
@@ -195,7 +197,7 @@ def parse_client_credentials(raw: str | bytes) -> dict[str, str]:
 
 
 class _LoopbackHandler(BaseHTTPRequestHandler):
-    server_version = "StudyFlowOAuth/1.0"
+    server_version = "LectioOAuth/1.0"
 
     def do_GET(self) -> None:  # noqa: N802 - API di http.server
         query = parse_qs(urlsplit(self.path).query)
@@ -205,11 +207,11 @@ class _LoopbackHandler(BaseHTTPRequestHandler):
             return
         self.server.oauth_result = {key: values[0] for key, values in query.items()}  # type: ignore[attr-defined]
         ok = "code" in query
-        title = "StudyFlow collegato a Google Calendar" if ok else "Autorizzazione annullata"
+        title = "Lectio collegato a Google Calendar" if ok else "Autorizzazione annullata"
         body = (
-            "Puoi chiudere questa scheda e tornare a StudyFlow."
+            "Puoi chiudere questa scheda e tornare a Lectio."
             if ok
-            else "StudyFlow non e' stato collegato. Puoi chiudere questa scheda."
+            else "Lectio non e' stato collegato. Puoi chiudere questa scheda."
         )
         page = (
             "<!DOCTYPE html><html lang='it'><head><meta charset='utf-8'>"
@@ -230,7 +232,7 @@ class _LoopbackHandler(BaseHTTPRequestHandler):
 
 
 class GoogleAuth:
-    """Gestione credenziali OAuth salvate nel database di StudyFlow."""
+    """Gestione credenziali OAuth salvate nel database di Lectio."""
 
     def __init__(self, db: Any, session_factory: Callable[[], Any] | None = None):
         self.db = db
@@ -356,7 +358,7 @@ class GoogleAuth:
         if not tokens.get("refresh_token"):
             raise GoogleAuthError(
                 "Google non ha restituito un refresh token. Revoca l'accesso di "
-                "StudyFlow da myaccount.google.com/permissions e riprova."
+                "Lectio da myaccount.google.com/permissions e riprova."
             )
         self._store_tokens(tokens)
         LOGGER.info("Account Google collegato.")

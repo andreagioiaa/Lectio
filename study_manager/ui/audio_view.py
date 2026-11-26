@@ -387,7 +387,7 @@ class AudioView(ctk.CTkFrame):
             card,
             text=(
                 "La riproduzione manuale resta indipendente dal timer. "
-                "Se scegli un altro brano durante una sessione, StudyFlow non lo interrompe."
+                "Se scegli un altro brano durante una sessione, Lectio non lo interrompe."
             ),
             font=font(9),
             text_color=COLORS.text_faint,
@@ -459,7 +459,7 @@ class AudioView(ctk.CTkFrame):
         ctk.CTkLabel(
             card,
             text=(
-                "YouTube non offre una riproduzione solo-audio ufficiale. StudyFlow "
+                "YouTube non offre una riproduzione solo-audio ufficiale. Lectio "
                 "scarica la traccia migliore, la converte in MP3 e la salva nella "
                 "cartella sounds con il titolo del video."
             ),
@@ -993,7 +993,7 @@ class AudioView(ctk.CTkFrame):
 
         threading.Thread(
             target=worker,
-            name="StudyFlow-FocusSounds",
+            name="Lectio-FocusSounds",
             daemon=True,
         ).start()
 
@@ -1035,7 +1035,7 @@ class AudioView(ctk.CTkFrame):
                 text=(
                     "Per scaricare da YouTube serve FFmpeg. Installa con "
                     "'winget install Gyan.FFmpeg' oppure copia ffmpeg.exe nella "
-                    "cartella dati di StudyFlow."
+                    "cartella dati di Lectio."
                 ),
                 text_color=COLORS.amber,
             )
@@ -1067,7 +1067,7 @@ class AudioView(ctk.CTkFrame):
                 "FFmpeg non trovato",
                 "Per estrarre l'audio di YouTube serve FFmpeg.\n\n"
                 "Installa con: winget install Gyan.FFmpeg\n"
-                "oppure copia ffmpeg.exe nella cartella dati di StudyFlow.",
+                "oppure copia ffmpeg.exe nella cartella dati di Lectio.",
                 parent=self.winfo_toplevel(),
             )
             return
@@ -1094,7 +1094,7 @@ class AudioView(ctk.CTkFrame):
 
         threading.Thread(
             target=worker,
-            name="StudyFlow-YouTubeProbe",
+            name="Lectio-YouTubeProbe",
             daemon=True,
         ).start()
 
@@ -1148,7 +1148,7 @@ class AudioView(ctk.CTkFrame):
 
         threading.Thread(
             target=worker,
-            name="StudyFlow-YouTubeDownload",
+            name="Lectio-YouTubeDownload",
             daemon=True,
         ).start()
 

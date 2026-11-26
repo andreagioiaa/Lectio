@@ -230,10 +230,10 @@ class RenderState:
 
 def render_state(widget) -> RenderState:
     """``RenderState`` associato a una vista (creato al primo uso)."""
-    state = getattr(widget, "_studyflow_render_state", None)
+    state = getattr(widget, "_lectio_render_state", None)
     if state is None:
         state = RenderState()
-        widget._studyflow_render_state = state
+        widget._lectio_render_state = state
     return state
 
 

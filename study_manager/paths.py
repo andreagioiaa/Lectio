@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 
 
-APP_DIR_NAME = "StudyFlow"
+APP_DIR_NAME = "Lectio"
+# Cartella dati usata prima del cambio nome: viene migrata al primo avvio.
+LEGACY_APP_DIR_NAME = "StudyFlow"
 
 
 def project_root() -> Path:
@@ -23,16 +25,35 @@ def resource_path(relative: str | Path) -> Path:
 
 def app_data_dir() -> Path:
     """Cartella dati persistente, sempre scrivibile e separata da Program Files."""
-    override = os.environ.get("STUDYFLOW_DATA_DIR", "").strip()
+    override = os.environ.get("LECTIO_DATA_DIR", "").strip()
     if override:
         path = Path(override).expanduser().resolve()
     elif os.name == "nt":
         root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
         path = Path(root) / APP_DIR_NAME
+        _migrate_legacy_dir(Path(root) / LEGACY_APP_DIR_NAME, path)
     else:
         path = Path.home() / f".{APP_DIR_NAME.lower()}"
+        _migrate_legacy_dir(Path.home() / f".{LEGACY_APP_DIR_NAME.lower()}", path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _migrate_legacy_dir(legacy: Path, target: Path) -> None:
+    """Rinomina la vecchia cartella dati se quella nuova non esiste ancora."""
+    if target.exists() or not legacy.is_dir():
+        return
+    try:
+        legacy.rename(target)
+    except OSError:
+        return  # es. file in uso: si parte da una cartella nuova, la vecchia resta intatta.
+    old_log = target / "logs" / "studyflow.log"
+    new_log = target / "logs" / "lectio.log"
+    if old_log.exists() and not new_log.exists():
+        try:
+            old_log.rename(new_log)
+        except OSError:
+            pass
 
 
 def _is_writable(path: Path) -> bool:
@@ -50,13 +71,13 @@ def sounds_dir(data: Path) -> Path:
     """Cartella ``sounds`` accanto all'app, con fallback nella cartella dati.
 
     In modalita' sorgente usa la radice del progetto; nell'exe usa la cartella
-    che contiene StudyFlow.exe. Se quella posizione non e' scrivibile (ad esempio
-    Program Files), usa ``%LOCALAPPDATA%\\StudyFlow\\sounds``.
+    che contiene Lectio.exe. Se quella posizione non e' scrivibile (ad esempio
+    Program Files), usa ``%LOCALAPPDATA%\\Lectio\\sounds``.
     """
-    override = os.environ.get("STUDYFLOW_SOUNDS_DIR", "").strip()
+    override = os.environ.get("LECTIO_SOUNDS_DIR", "").strip()
     if override:
         path = Path(override).expanduser().resolve()
-    elif os.environ.get("STUDYFLOW_DATA_DIR", "").strip():
+    elif os.environ.get("LECTIO_DATA_DIR", "").strip():
         path = data / "sounds"
     elif is_frozen():
         path = executable_path().parent / "sounds"
@@ -73,14 +94,14 @@ def subjects_dir(data: Path) -> Path:
     """Cartella ``Materie`` nella radice di funzionamento dell'app.
 
     Come per ``sounds``: in modalita' sorgente e' la radice del progetto,
-    nell'exe la cartella che contiene StudyFlow.exe. Se non e' scrivibile
-    (es. Program Files) si usa ``%LOCALAPPDATA%\\StudyFlow\\Materie``.
-    ``STUDYFLOW_SUBJECTS_DIR`` permette di scegliere un percorso diverso.
+    nell'exe la cartella che contiene Lectio.exe. Se non e' scrivibile
+    (es. Program Files) si usa ``%LOCALAPPDATA%\\Lectio\\Materie``.
+    ``LECTIO_SUBJECTS_DIR`` permette di scegliere un percorso diverso.
     """
-    override = os.environ.get("STUDYFLOW_SUBJECTS_DIR", "").strip()
+    override = os.environ.get("LECTIO_SUBJECTS_DIR", "").strip()
     if override:
         path = Path(override).expanduser().resolve()
-    elif os.environ.get("STUDYFLOW_DATA_DIR", "").strip():
+    elif os.environ.get("LECTIO_DATA_DIR", "").strip():
         path = data / "Materie"
     elif is_frozen():
         path = executable_path().parent / "Materie"
@@ -112,7 +133,7 @@ def ensure_data_layout() -> dict[str, Path]:
         "models": models,
         "subjects": subjects,
         "db": data / "study_manager.db",
-        "log": logs / "studyflow.log",
+        "log": logs / "lectio.log",
         "guard_log": logs / "hosts_guard.log",
         "hosts_control": data / "hosts_guard_control.json",
         "hosts_status": data / "hosts_guard_status.json",

@@ -130,6 +130,7 @@ def parse_ics_bytes(
             digest = hashlib.sha1(
                 f"{title}|{start_local.isoformat()}|{location}".encode("utf-8")
             ).hexdigest()[:24]
+            # Prefisso storico mantenuto: i reimport non duplicano eventi gia' presenti.
             uid = f"studyflow-{digest}"
 
         rrule_prop = component.get("rrule")

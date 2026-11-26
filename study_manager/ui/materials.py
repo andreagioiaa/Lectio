@@ -23,7 +23,7 @@ from .widgets import Card, center_window, clear_children, set_window_icon
 
 
 ORPHAN_SUBJECT = "Materiali senza materia"
-ORPHAN_SUBJECT_KEY = "\x00studyflow-orphan-materials"
+ORPHAN_SUBJECT_KEY = "\x00lectio-orphan-materials"
 
 
 class MaterialsSection(Card):

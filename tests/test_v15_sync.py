@@ -25,7 +25,9 @@ def close_db(db: Database) -> None:
 class SyncTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.base = Path(self.tmp.name)
+        # resolve(): sui runner di GitHub TEMP usa il nome breve (RUNNER~1), mentre
+        # app_data_dir() restituisce il percorso completo.
+        self.base = Path(self.tmp.name).resolve()
         self.local = self.base / "pc1"
         self.cloud = self.base / "OneDrive" / "Lectio"
         self.cloud.mkdir(parents=True)

@@ -196,11 +196,16 @@ class LectioApp(ctk.CTk):
 
         brand = ctk.CTkFrame(bar, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="w", padx=(18, 14))
-        ctk.CTkLabel(brand, text="Lectio", font=font(17, "bold"), text_color=COLORS.text, anchor="w").pack(
+        logo = self._load_logo(40)
+        if logo is not None:
+            ctk.CTkLabel(brand, text="", image=logo).pack(side="left", padx=(0, 10))
+        brand_text = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_text.pack(side="left")
+        ctk.CTkLabel(brand_text, text="Lectio", font=font(17, "bold"), text_color=COLORS.text, anchor="w").pack(
             anchor="w"
         )
         ctk.CTkLabel(
-            brand, text=f"v{APP_VERSION} · locale e offline", font=font(9), text_color=COLORS.accent, anchor="w",
+            brand_text, text=f"v{APP_VERSION} · locale e offline", font=font(9), text_color=COLORS.accent, anchor="w",
         ).pack(anchor="w")
 
         nav = ctk.CTkFrame(bar, fg_color="transparent")
@@ -453,6 +458,18 @@ class LectioApp(ctk.CTk):
                 prepare()
             except Exception:
                 self.logger.exception("Preparazione della vista '%s' non riuscita.", key)
+
+    def _load_logo(self, height: int) -> ctk.CTkImage | None:
+        """Logo dell'app (sfondo trasparente) per la barra in alto; ``None`` se il file manca."""
+        try:
+            from PIL import Image
+
+            image = Image.open(self.paths["logo"])
+            width = round(height * image.width / image.height)
+            return ctk.CTkImage(light_image=image, dark_image=image, size=(width, height))
+        except Exception:  # noqa: BLE001 - il logo e' solo decorativo
+            LOGGER.debug("Logo non caricato", exc_info=True)
+            return None
 
     def _build_toast(self) -> None:
         self._toast = ctk.CTkLabel(

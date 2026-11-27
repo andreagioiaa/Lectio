@@ -8,6 +8,7 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata, get_packa
 datas = [
     ("assets/app.ico", "assets"),
     ("assets/app.png", "assets"),
+    ("assets/logo_mark.png", "assets"),
     # KaTeX locale per l'anteprima HTML offline del modulo PDF e Slide.
     ("assets/katex", "assets/katex"),
 ]

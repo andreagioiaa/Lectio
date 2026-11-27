@@ -12,6 +12,7 @@ import customtkinter as ctk
 
 from ..config import COLORS
 from ..paths import SYNC_MARKER_NAME, app_data_dir
+from ..services import cloud_folders as cloud
 from ..services import sync_folder as sync
 from .share_view import format_size
 from .summary_view import ProgressDialog, run_in_background
@@ -74,11 +75,15 @@ class SyncCard(Card):
         elif folder is not None:
             self.status.configure(text=f"● Cartella scelta ma non raggiungibile: {folder}. Stai usando i dati di "
                                        "questo PC.", text_color=COLORS.amber)
-            _button(buttons, "Scegli un'altra cartella…", self.enable, primary=True).pack(side="left", padx=(0, 8))
+            _button(buttons, "Configura automaticamente…", self.auto_setup, primary=True, width=220).pack(
+                side="left", padx=(0, 8))
+            _button(buttons, "Scegli un'altra cartella…", self.enable).pack(side="left", padx=(0, 8))
             _button(buttons, "Usa solo questo PC", self._forget).pack(side="left")
         else:
             self.status.configure(text="● Dati solo su questo PC", text_color=COLORS.text_faint)
-            _button(buttons, "Scegli cartella sincronizzata…", self.enable, primary=True, width=230).pack(side="left")
+            _button(buttons, "Configura automaticamente…", self.auto_setup, primary=True, width=220).pack(
+                side="left", padx=(0, 8))
+            _button(buttons, "Scegli la cartella a mano…", self.enable, width=210).pack(side="left")
 
     # -------------------------------------------------------------- azioni
     def _open_folder(self) -> None:
@@ -100,8 +105,47 @@ class SyncCard(Card):
                                          title="Cartella sincronizzata (es. OneDrive\\Lectio)")
         if not folder:
             return
-        target = Path(folder)
+        self._confirm_and_enable(Path(folder))
+
+    def auto_setup(self) -> None:
+        """Trova OneDrive/Google Drive/Dropbox su questo PC e prepara da solo la cartella ``Lectio``."""
+        parent = self.winfo_toplevel()
+        detection = cloud.detect_cloud_roots()
+        if not detection.roots:
+            hints = "\n\n".join(detection.hints) or (
+                "Installa OneDrive, Google Drive per desktop o Dropbox, accedi con il tuo account e riprova.")
+            if messagebox.askyesno(
+                "Nessuna cartella cloud trovata",
+                f"Su questo PC non ho trovato cartelle di OneDrive, Google Drive o Dropbox pronte.\n\n{hints}"
+                "\n\nVuoi scegliere una cartella a mano?",
+                parent=parent,
+            ):
+                self.enable()
+            return
+        CloudChooser(parent, detection, self._use_cloud_root)
+
+    def _use_cloud_root(self, root: cloud.CloudRoot) -> None:
+        parent = self.winfo_toplevel()
+        try:
+            target = cloud.prepare_target(root)
+        except OSError as exc:
+            messagebox.showerror("Sincronizzazione tra PC", str(exc), parent=parent)
+            return
+        if target.state == "incomplete":
+            messagebox.showwarning(
+                "Dati non ancora arrivati",
+                f"In {target.folder} ci sono i dati di Lectio (preparati da «{target.created_by or 'un altro PC'}»), "
+                f"ma {root.service_name} non ha ancora scaricato il database.\n\nAspetta che la sincronizzazione "
+                "finisca e riprova tra qualche minuto.",
+                parent=parent,
+            )
+            return
+        self._confirm_and_enable(target.folder, target)
+
+    def _confirm_and_enable(self, target: Path, cloud_target: cloud.Target | None = None) -> None:
+        parent = self.winfo_toplevel()
         use_existing = False
+        streaming = bool(cloud_target and cloud_target.root.streaming)
         if sync.folder_has_data(target):
             try:
                 marker = json.loads((target / SYNC_MARKER_NAME).read_text(encoding="utf-8"))
@@ -109,26 +153,42 @@ class SyncCard(Card):
                 marker = {}
             if not messagebox.askyesno(
                 "Dati gia' presenti",
-                f"La cartella contiene gia' i dati di Lectio (preparati da «{marker.get('created_by', 'un altro PC')}»)."
+                f"{target} contiene gia' i dati di Lectio (preparati da «{marker.get('created_by', 'un altro PC')}»)."
                 "\n\nUsare quei dati su questo PC? I dati attuali di questo PC non vengono cancellati: restano "
                 "in locale come copia di sicurezza.",
-                parent=self.winfo_toplevel(),
+                parent=parent,
             ):
                 return
             use_existing = True
         else:
             current = self._current()
             size = _folder_size(current["db"], current["subjects"], current["transcripts"], current["pdf_images"])
+            where = (f"nella cartella {target}\n(la crea Lectio in {cloud_target.root.label})"
+                     if cloud_target else f"in\n{target}")
             if not messagebox.askyesno(
                 "Sincronizza i dati",
-                f"Copiare i dati di Lectio ({format_size(size)}) in\n{target}?\n\nGli originali restano su questo "
+                f"Copiare i dati di Lectio ({format_size(size)}) {where}?\n\nGli originali restano su questo "
                 "PC come copia di sicurezza. Alla fine Lectio si chiude: riaprilo per usare la cartella "
-                "sincronizzata. Sugli altri PC scegli la stessa cartella dalle Impostazioni.",
-                parent=self.winfo_toplevel(),
+                "sincronizzata. Sugli altri PC usa «Configura automaticamente» o scegli la stessa cartella.",
+                parent=parent,
             ):
                 return
-        self._run(lambda report: sync.enable_sync(self._current(), target, use_existing, report),
-                  "Sincronizzazione attivata", "Lectio usera' la cartella sincronizzata dal prossimo avvio.")
+        message = "Lectio usera' la cartella sincronizzata dal prossimo avvio."
+        if streaming:
+            message += ("\n\nImportante: Google Drive e' in modalita' streaming, quindi i file possono restare "
+                        f"solo online. In Esplora file fai clic destro sulla cartella «{target.name}» → "
+                        "Accesso offline → Disponibile offline, cosi' Lectio funziona anche senza internet.")
+
+        def work(report):
+            if cloud_target is not None:
+                cloud.create_target(cloud_target)
+            result = sync.enable_sync(self._current(), target, use_existing, report)
+            if cloud_target is not None:
+                report(1.0, "Tengo i file sempre su questo PC…")
+                cloud.keep_offline(cloud_target)
+            return result
+
+        self._run(work, "Sincronizzazione attivata", message)
 
     def disable(self) -> None:
         if not messagebox.askyesno(
@@ -160,3 +220,59 @@ class SyncCard(Card):
             messagebox.showerror("Sincronizzazione tra PC", str(exc), parent=app)
 
         run_in_background(app, lambda: work(report), done, failed)
+
+
+class CloudChooser(ctk.CTkToplevel):
+    """Elenco dei servizi cloud trovati su questo PC: l'utente ne sceglie uno."""
+
+    def __init__(self, master, detection: cloud.Detection, on_choose):
+        super().__init__(master)
+        self.title("Configura la sincronizzazione")
+        self.configure(fg_color=COLORS.bg)
+        self.resizable(False, False)
+        self.transient(master)
+        self._on_choose = on_choose
+        self._roots = detection.roots
+        self._choice = ctk.IntVar(value=0)
+        body = ctk.CTkFrame(self, fg_color=COLORS.surface, corner_radius=14, border_width=1,
+                            border_color=COLORS.border)
+        body.pack(fill="both", expand=True, padx=12, pady=12)
+        ctk.CTkLabel(body, text="Dove vuoi sincronizzare i dati?", font=font(13, "bold"), text_color=COLORS.text,
+                     anchor="w").pack(fill="x", padx=16, pady=(14, 2))
+        ctk.CTkLabel(body, text="Lectio crea la cartella «Lectio» nel servizio scelto. Se un altro PC l'ha gia' "
+                                "preparata, usa i dati che ci sono.",
+                     font=font(10), text_color=COLORS.text_muted, anchor="w", justify="left",
+                     wraplength=480).pack(fill="x", padx=16, pady=(0, 10))
+        for index, root in enumerate(self._roots):
+            row = ctk.CTkFrame(body, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=(0, 8))
+            ctk.CTkRadioButton(row, text=root.label, variable=self._choice, value=index, font=font(11, "bold"),
+                               text_color=COLORS.text, fg_color=COLORS.accent,
+                               hover_color=COLORS.accent_hover).pack(anchor="w")
+            detail = str(root.path)
+            if root.streaming:
+                detail += "\nStreaming: dopo la configurazione rendi la cartella «Disponibile offline»."
+            ctk.CTkLabel(row, text=detail, font=font(10), text_color=COLORS.text_faint, anchor="w",
+                         justify="left", wraplength=450).pack(fill="x", padx=(28, 0))
+        for hint in detection.hints:
+            ctk.CTkLabel(body, text=f"• {hint}", font=font(10), text_color=COLORS.amber, anchor="w",
+                         justify="left", wraplength=480).pack(fill="x", padx=16, pady=(0, 6))
+        buttons = ctk.CTkFrame(body, fg_color="transparent")
+        buttons.pack(fill="x", padx=16, pady=(6, 14))
+        _button(buttons, "Continua", self._confirm, primary=True, width=120).pack(side="right")
+        _button(buttons, "Annulla", self.destroy, width=100).pack(side="right", padx=(0, 8))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        try:
+            self.update_idletasks()
+            width, height = 540, body.winfo_reqheight() + 24
+            x = master.winfo_rootx() + max(0, (master.winfo_width() - width) // 2)
+            y = master.winfo_rooty() + max(0, (master.winfo_height() - height) // 3)
+            self.geometry(f"{width}x{height}+{x}+{y}")
+            self.grab_set()
+        except Exception:  # finestra gia' chiusa o grab non disponibile
+            LOGGER.debug("Finestra di scelta del cloud non centrata", exc_info=True)
+
+    def _confirm(self) -> None:
+        root = self._roots[self._choice.get()]
+        self.destroy()
+        self._on_choose(root)

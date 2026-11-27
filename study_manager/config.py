@@ -9,7 +9,7 @@ APP_NAME = "Lectio"
 APP_TITLE = "Lectio - Gestionale Studio & Analytics"
 # Versione dell'app: unica fonte di verita'. La CI ne ricava version_info.txt,
 # il tag della release (vX.Y.Z) e update.json (vedi worktree_commit.md).
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.2.0"
 # Versione minima ancora supportata: chi ha un Lectio piu' vecchio e' obbligato
 # ad aggiornare. Si alza solo quando una versione vecchia farebbe danni (es.
 # cambia il formato della cartella sincronizzata o della condivisione).

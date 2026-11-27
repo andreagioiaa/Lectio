@@ -1470,7 +1470,7 @@ Get-Item .\dist\Lectio.exe | Select-Object Name, Length, VersionInfo
 (Get-Item .\dist\Lectio.exe).VersionInfo.FileVersion
 ```
 
-La versione attesa per questa release e' `1.5.0.0`. Se si distribuisce l'exe a un
+La versione attesa e' quella di `APP_VERSION` con uno `.0` finale (es. `0.1.5.0`). Se si distribuisce l'exe a un
 altro PC, non serve Python: servono solo `Lectio.exe` e i permessi utente
 normali. Il guardiano hosts viene avviato dallo stesso exe con l'argomento
 interno `--hosts-guard`. Per il download YouTube e per la trascrizione serve
@@ -1480,11 +1480,22 @@ manca; lo stesso vale per Pandoc al primo export Word.
 
 ### Aggiornare la versione
 
-Quando si cambia versione, aggiornare in modo coerente:
+La versione si scrive solo in `study_manager/config.py` (`APP_VERSION`, e
+`MIN_SUPPORTED_VERSION` per gli aggiornamenti obbligatori). `version_info.txt`
+si rigenera con `python tools/release.py version-info` (lo fanno anche
+`build.ps1` e la CI). Al merge in `main` di una nuova `APP_VERSION` la CI pubblica
+da sola la Release con `Lectio.exe` e `update.json`. Le regole complete sono in
+[worktree_commit.md](worktree_commit.md).
 
-- `study_manager/__init__.py` (`__version__`);
-- `study_manager/config.py` (`APP_VERSION`);
-- `version_info.txt` (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`).
+### Aggiornamenti automatici
+
+A ogni avvio Lectio scarica `update.json` dall'ultima Release di GitHub. Se c'e'
+una versione piu' recente compare il pulsante **Aggiorna a vX** nella barra in
+alto e la finestra con le novita'. Se la versione in uso e' sotto
+`min_version`, la finestra e' bloccante. "Aggiorna ora" scarica il nuovo exe,
+ne verifica lo SHA-256, fa un backup dei dati in `backups` della cartella dati e
+riavvia Lectio aggiornato. Il controllo si ripete a mano da **Impostazioni →
+Controlla aggiornamenti**.
 
 ---
 

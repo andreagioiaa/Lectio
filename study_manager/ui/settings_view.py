@@ -337,7 +337,21 @@ class SettingsView(ctk.CTkFrame):
             text=f"Lectio v{APP_VERSION} · Python + CustomTkinter + SQLite",
             font=font(10),
             text_color=COLORS.text_faint,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=22, pady=(0, 18))
+        ).grid(row=4, column=0, sticky="w", padx=22, pady=(0, 18))
+        ctk.CTkButton(
+            card,
+            text="Controlla aggiornamenti",
+            height=30,
+            width=170,
+            font=font(10, "bold"),
+            fg_color=COLORS.surface_alt,
+            hover_color=COLORS.surface_hover,
+            border_width=1,
+            border_color=COLORS.border,
+            text_color=COLORS.text_muted,
+            corner_radius=8,
+            command=lambda: self.app.check_for_updates(manual=True),
+        ).grid(row=4, column=1, sticky="e", padx=22, pady=(0, 18))
 
     def _build_backup_card(self, parent) -> None:
         card = Card(parent)

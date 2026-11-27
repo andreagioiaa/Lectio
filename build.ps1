@@ -61,6 +61,12 @@ try {
         throw "Icona assets\app.ico mancante."
     }
 
+    # version_info.txt (metadati dell'exe) si ricava da APP_VERSION in config.py.
+    & $venvPython tools\release.py version-info
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generazione di version_info.txt non riuscita."
+    }
+
     Write-Host "Compilazione con PyInstaller..." -ForegroundColor Yellow
     & $venvPython -m PyInstaller --noconfirm --clean Lectio.spec
     if ($LASTEXITCODE -ne 0) {

@@ -1,5 +1,6 @@
 """Lectio - gestionale desktop per lo studio e l'analisi dell'attenzione."""
 
-__version__ = "1.5.0"
-APP_NAME = "Lectio"
-APP_TITLE = "Lectio - Gestionale Studio & Analytics"
+# La versione si scrive solo in ``config.APP_VERSION``.
+from .config import APP_NAME, APP_TITLE, APP_VERSION as __version__
+
+__all__ = ["APP_NAME", "APP_TITLE", "__version__"]

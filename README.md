@@ -360,6 +360,7 @@ StudyApp/
 │   │   ├── course_summary.py   # riassunto del corso e riassunto totale
 │   │   ├── exam_questions.py   # divisione dei temi d'esame, ricorrenze, export
 │   │   ├── subject_share.py    # esporta/importa una materia in ZIP
+│   │   ├── cloud_folders.py    # trova OneDrive, Google Drive e Dropbox su questo PC
 │   │   ├── sync_folder.py      # cartella sincronizzata, blocco tra PC, snapshot
 │   │   └── pdf_tools/          # PDF e Slide (nessuna dipendenza dalla GUI)
 │   │       ├── document.py     # blocchi, formato sorgente con === SLIDE N ===
@@ -410,6 +411,7 @@ StudyApp/
     ├── test_v15_exam.py        # appelli e domande d'esame
     ├── test_v15_share.py       # ZIP della materia
     ├── test_v15_sync.py        # cartella sincronizzata
+    ├── test_cloud_folders.py   # rilevamento automatico delle cartelle cloud
     └── test_pandoc_setup.py    # download di Pandoc
 ```
 
@@ -453,7 +455,26 @@ se la cartella viene spostata, sincronizzata o aperta da un altro PC.
 
 Da **Impostazioni → Sincronizzazione tra PC** si sceglie una cartella gia'
 sincronizzata (es. `OneDrive\Lectio`). Lectio vi copia i dati e, al riavvio, li
-usa da li':
+usa da li'.
+
+**Configura automaticamente** trova da solo i servizi gia' installati e collegati
+a un account (`study_manager/services/cloud_folders.py`), senza API ne' accessi
+in piu':
+
+| Servizio | Dove lo trova |
+|---|---|
+| OneDrive | account in `HKCU\Software\Microsoft\OneDrive\Accounts\*\UserFolder` |
+| Google Drive per desktop | unita' con etichetta "Google Drive" (`G:\Il mio Drive`, streaming) o "Il mio Drive" in mirroring (`root_preference_sqlite.db`) |
+| Dropbox | `info.json` in `%APPDATA%\Dropbox` o `%LOCALAPPDATA%\Dropbox` |
+
+Nel servizio scelto Lectio crea `Lectio` (oppure `Lectio dati` se esiste gia'
+una cartella `Lectio` dell'utente con altri file). Se un altro PC l'ha gia'
+preparata, propone di usare quei dati; se c'e' il file `lectio-sync.json` ma il
+database non e' ancora arrivato, chiede di aspettare invece di sovrascriverlo.
+Con OneDrive e Dropbox la cartella viene tenuta sempre sul PC (`attrib +P`).
+Con Google Drive in streaming va resa a mano **Disponibile offline** (clic destro
+→ Accesso offline): Lectio lo ricorda alla fine. Se trova un servizio installato
+ma non pronto (OneDrive senza account, Google Drive chiuso) lo spiega.
 
 ```text
 OneDrive\Lectio\

@@ -9,7 +9,25 @@ trascrivere videolezioni e analizzare la qualita' dell'attenzione.
 L'interfaccia e' realizzata in **CustomTkinter**, i dati sono salvati in un
 database **SQLite** locale e l'eseguibile finale e' un singolo file prodotto con
 **PyInstaller**. Non vengono usati Electron, Chromium, server web o servizi cloud
-per l'elaborazione o la sincronizzazione dei dati.
+per l'elaborazione o la sincronizzazione dei dati: per usare Lectio su piu' PC
+basta indicare una cartella gia' sincronizzata dall'utente (OneDrive, Google
+Drive, Dropbox), senza account ne' server.
+
+### Novita' della versione 1.5
+
+- **Export Markdown (.md)** in PDF e Slide, pronto anche come contesto per un LLM.
+- **Anno accademico** dei materiali e copia automatica dei file nella cartella
+  della materia.
+- **Riassunto del corso**: i capitoli di appunti finiti diventano un riassunto
+  unico con indice, esportabile in .md, .tex, .docx e **PDF**; storico delle
+  versioni. **Crea Riassunto Totale** unisce tutte le slide in `riassunto_rapido.md`.
+- **Esame**: appelli e domande d'esame per materia, importazione dei temi PDF
+  con divisione automatica in domande, ricorrenze tra appelli, flashcard ed
+  export `Domande_esame.md`.
+- **Condivisione**: esporta e importa una materia completa in uno ZIP.
+- **Sincronizzazione tra PC** tramite una cartella OneDrive/Google Drive/Dropbox.
+- Export Word funzionante anche nell'exe pubblicato: Pandoc viene scaricato al
+  primo utilizzo.
 
 ---
 
@@ -63,6 +81,11 @@ per l'elaborazione o la sincronizzazione dei dati.
 - Aggiornamento automatico delle ore quando si studia da un materiale.
 - Aggiunta manuale di ore.
 - Apertura del file con il programma predefinito di Windows (es. lettore PDF).
+- **Anno accademico** di provenienza (es. `2025/26`), con i materiali raggruppati
+  per anno nella pagina materia.
+- Il file scelto viene **copiato** nella cartella della materia (`Slide` per PDF
+  e presentazioni, `Documenti` per il resto); l'originale resta dov'era. Per i
+  materiali precedenti c'e' il pulsante **Copia N file nella cartella**.
 - I materiali creati prima di questa versione senza materia restano raggiungibili
   da una voce temporanea **Materiali senza materia**, finche' non vengono
   assegnati.
@@ -95,6 +118,41 @@ per l'elaborazione o la sincronizzazione dei dati.
   di una scheda allo stato nuovo.
 - Le schede scadute o mai studiate sono subito disponibili nella sessione
   **Studia ora**.
+
+### Riassunto del corso
+- In PDF e Slide, **Aggiungi al riassunto del corso** copia il capitolo di
+  appunti nel riassunto della materia, come nuovo capitolo o sovrascrivendo
+  quello esistente (la versione precedente resta nello storico, ripristinabile).
+- Nella pagina materia i capitoli si riordinano, rinominano ed esportano in
+  `.md`, `.tex`, `.docx` e `.pdf` (con indice; il PDF usa MiKTeX o TeX Live).
+- **Crea Riassunto Totale** genera `riassunto_rapido.md` da tutte le slide della
+  materia in ordine di nome file, usando gli appunti gia' scritti o trascrivendo
+  i PDF mancanti.
+
+### Esame e domande d'esame
+- Appelli (data, titolo, note, PDF del tema) e domande per ogni materia, piu'
+  le domande "senza appello" raccolte all'orale.
+- **Importa tema PDF**: trascrizione, divisione automatica in domande
+  (`Esercizio N`, `Domanda N`, elenchi numerati) e schermata di revisione.
+- Argomento di ogni domanda scelto tra le slide della materia, soluzione, note.
+- **Uscita anche in…**: collega la stessa domanda tra appelli diversi
+  (suggerimenti per somiglianza); filtro **Solo ricorrenti**.
+- **Crea flashcard** da una domanda ed **Esporta tutte (.md)**.
+
+### Condivisione di una materia
+- **Esporta ZIP** dalla pagina materia: slide divise per anno accademico,
+  appunti, riassunto, esami, trascrizioni, flashcard e un `LEGGIMI.md` con il
+  link a Lectio. Le parti da includere si scelgono con la loro dimensione.
+- **Importa materia (ZIP)**: anteprima, poi nuova materia oppure unione senza
+  duplicati; materiali, capitoli, riassunto, domande e flashcard tornano
+  collegati.
+
+### Uso su piu' PC
+- **Impostazioni → Sincronizzazione tra PC**: database, `Materie`, trascrizioni
+  e immagini degli appunti in una cartella sincronizzata; modelli, suoni e log
+  restano su ogni PC.
+- Avviso se Lectio e' aperto su un altro PC, database in un unico file, avviso
+  per le copie in conflitto e snapshot automatici alla chiusura.
 
 ### Backup e trasferimento dati
 - Esportazione di tutti i dati applicativi in un archivio ZIP portabile.
@@ -129,8 +187,9 @@ per l'elaborazione o la sincronizzazione dei dati.
   copiato ne' modificato.
 
 ### PDF e Slide
-- Trascrizione di slide e dispense PDF in **.txt**, **.tex** (corpo o documento
-  completo compilabile) e **.docx** con equazioni native di Word (OMML).
+- Trascrizione di slide e dispense PDF in **.txt**, **.md** (Markdown comune),
+  **.tex** (corpo o documento completo compilabile) e **.docx** con equazioni
+  native di Word (OMML).
 - Testo vettoriale con PyMuPDF (pdfplumber come alternativa), OCR locale con
   Tesseract o PaddleOCR per i PDF scansionati, Marker o Nougat facoltativi per le
   pagine con formule complesse.
@@ -297,13 +356,19 @@ StudyApp/
 │   │   ├── spaced_repetition.py # pianificazione SM-2/Anki per le flashcard
 │   │   ├── subjects.py         # CFU, monte ore, date e countdown esami
 │   │   ├── backup.py           # export/import ZIP, validazione e ripristino
+│   │   ├── subject_folders.py  # cartella di ogni materia e copia dei materiali
+│   │   ├── course_summary.py   # riassunto del corso e riassunto totale
+│   │   ├── exam_questions.py   # divisione dei temi d'esame, ricorrenze, export
+│   │   ├── subject_share.py    # esporta/importa una materia in ZIP
+│   │   ├── sync_folder.py      # cartella sincronizzata, blocco tra PC, snapshot
 │   │   └── pdf_tools/          # PDF e Slide (nessuna dipendenza dalla GUI)
 │   │       ├── document.py     # blocchi, formato sorgente con === SLIDE N ===
 │   │       ├── extract.py      # PyMuPDF, pdfplumber, OCR, Marker/Nougat
 │   │       ├── layout.py       # titoli, elenchi, paragrafi, pulizia margini
 │   │       ├── mathlayout.py   # ricostruzione geometrica delle formule
 │   │       ├── mathconv.py     # Unicode <-> LaTeX
-│   │       ├── export.py       # .txt, .tex, .docx (Pandoc), HTML KaTeX
+│   │       ├── export.py       # .txt, .md, .tex, .docx (Pandoc), PDF, HTML KaTeX
+│   │       ├── pandoc_setup.py # download di Pandoc al primo export Word
 │   │       ├── text_removal.py # "Rimuovi testo": rimozione e regole salvate
 │   │       └── controller.py   # thread di lavoro, batch, annullamento
 │   └── ui/
@@ -318,6 +383,11 @@ StudyApp/
 │       ├── calendar_view.py
 │       ├── materials.py        # materiali dentro la pagina materia e dialogo
 │       ├── subjects_view.py    # pagine materia, docente, CFU ed esami
+│       ├── summary_view.py     # sezione Riassunto del corso e dialoghi
+│       ├── exam_view.py        # sezione Esame: appelli, domande, revisione
+│       ├── share_view.py       # Esporta/Importa materia (ZIP)
+│       ├── sync_card.py        # Impostazioni: sincronizzazione tra PC
+│       ├── pandoc_prompt.py    # proposta di download di Pandoc
 │       ├── flashcard_view.py   # archivio flashcard, dialoghi e sessione di studio
 │       ├── analytics_view.py
 │       ├── settings_view.py    # impostazioni e backup/importazione dati
@@ -334,7 +404,13 @@ StudyApp/
     ├── test_pomodoro.py
     ├── test_scrolling.py
     ├── test_subjects.py
-    └── test_transcription.py
+    ├── test_transcription.py
+    ├── test_v15_phase1.py      # .md, anno accademico, percorsi, copia materiali
+    ├── test_v15_summary.py     # riassunto del corso e riassunto totale
+    ├── test_v15_exam.py        # appelli e domande d'esame
+    ├── test_v15_share.py       # ZIP della materia
+    ├── test_v15_sync.py        # cartella sincronizzata
+    └── test_pandoc_setup.py    # download di Pandoc
 ```
 
 ---
@@ -360,14 +436,44 @@ Contenuto:
 | `hosts_original.backup` | backup una tantum della porzione originale del file hosts |
 | `hosts_guard_control.json` | richieste dell'app al guardiano |
 | `hosts_guard_status.json` | stato scritto dal guardiano |
+| `pdf_images\` | immagini estratte dai PDF e usate negli appunti |
+| `pandoc.exe` | Pandoc scaricato al primo export Word (solo exe) |
+| `sync.json` | cartella sincronizzata scelta su questo PC, se c'e' |
 
 La cartella audio `sounds` e' separata: si trova accanto all'applicazione, come
 descritto nella sezione Audio, e contiene brani importati, MP3 scaricati da
 YouTube e suoni di concentrazione generati. Le videolezioni non vengono copiate:
 il database conserva il percorso originale scelto dall'utente.
 
-Il database usa WAL, `foreign_keys=ON`, connessioni thread-locali e timeout per
-evitare errori di lock. Il file hosts non viene mai sostituito in blocco: vengono
+I percorsi dei file che stanno in `Materie` o nella cartella dati sono salvati in
+forma relativa (`<materie>/Analisi/Slide/lezione.pdf`): il database resta valido
+se la cartella viene spostata, sincronizzata o aperta da un altro PC.
+
+### Cartella sincronizzata (uso su piu' PC)
+
+Da **Impostazioni → Sincronizzazione tra PC** si sceglie una cartella gia'
+sincronizzata (es. `OneDrive\Lectio`). Lectio vi copia i dati e, al riavvio, li
+usa da li':
+
+```text
+OneDrive\Lectio\
+  study_manager.db      database (in modalita' DELETE: un file solo)
+  Materie\              cartelle delle materie
+  transcripts\          trascrizioni senza materia
+  pdf_images\           immagini degli appunti
+  Snapshot\             ultimi 5 backup automatici, uno a ogni chiusura
+  lectio.lock           PC su cui Lectio e' aperto (aggiornato ogni minuto)
+  lectio-sync.json      segna la cartella preparata da Lectio
+```
+
+Restano su ogni PC: log, modelli di trascrizione, suoni, Pandoc, Tesseract e
+`sync.json`. Lectio va usato su un PC alla volta: all'avvio segnala se e' aperto
+altrove, se la cartella non e' raggiungibile (senza creare un database vuoto) e
+se il programma di sincronizzazione ha creato copie in conflitto
+(`study_manager-<PC>.db`). **Torna ai dati su questo PC** riporta tutto in locale.
+
+Il database usa WAL (DELETE nella cartella sincronizzata), `foreign_keys=ON`,
+connessioni thread-locali e timeout per evitare errori di lock. Il file hosts non viene mai sostituito in blocco: vengono
 gestiti solo i marcatori Lectio, preservando il contenuto dell'utente.
 
 Per una copia di sicurezza manuale e' sufficiente chiudere l'app e copiare la
@@ -622,9 +728,15 @@ pagina. Se in un backup o in dati precedenti esistono materiali senza materia,
 compare temporaneamente la voce **Materiali senza materia**: aprendo **Modifica**
 si puo' assegnare loro una materia esistente o scriverne una nuova.
 
-Il file originale non viene copiato ne' modificato. Se viene spostato o
-cancellato, Lectio mostra "non trovato" e permette comunque di modificare il
-record.
+Dalla v1.5 il file scelto viene **copiato** nella cartella della materia
+(`Slide` per PDF e presentazioni, `Documenti` per gli altri file): l'originale
+resta dov'era e non viene modificato. Un file identico gia' presente viene
+riusato; uno diverso con lo stesso nome riceve ` (2)`. I materiali creati prima
+della v1.5 restano collegati al file originale finche' non si preme **Copia N
+file nella cartella** nella sezione MATERIALI. Ogni materiale ha anche un **anno
+accademico** facoltativo; con piu' anni, la sezione li raggruppa dal piu'
+recente. Se un file non c'e' piu', Lectio mostra "non trovato" e permette
+comunque di modificare il record.
 
 Avviando un Pomodoro da un materiale, i minuti effettivi vengono aggiunti alle
 ore registrate sia che la sessione venga completata sia che venga interrotta.
@@ -640,8 +752,12 @@ sorgente; se non e' scrivibile si usa `%LOCALAPPDATA%\Lectio\Materie`.
 Materie/
   <Nome materia>/
     Trascrizioni/   .txt delle videolezioni della materia
-    Appunti/        export TXT/LaTeX/Word di PDF e Slide
+    Appunti/        export TXT/Markdown/LaTeX/Word di PDF e Slide
     Flashcard/      Flashcard.csv (Fronte;Retro;Note), aggiornato a ogni modifica
+    Slide/          copia dei PDF e delle presentazioni aggiunti come materiali
+    Documenti/      copia degli altri documenti (creata quando serve)
+    Riassunto/      Riassunto_corso.*, riassunto_rapido.md (creata quando serve)
+    Esami/          temi d'esame PDF e Domande_esame.md (creata quando serve)
 ```
 
 - La cartella viene creata quando la materia nasce (anche se scritta per la
@@ -660,7 +776,75 @@ Materie/
   **VIDEOLEZIONI E TRASCRIZIONI** e **FLASHCARD**, con i pulsanti per aprire i
   file, la cartella o la sezione corrispondente (es. *Ripassa*).
 
-I file originali scelti dall'utente (PDF, video, dispense) non vengono copiati.
+Le videolezioni non vengono copiate (sono troppo pesanti): resta il percorso
+originale.
+
+### Riassunto del corso
+
+Il riassunto e' la concatenazione dei capitoli di appunti che l'utente considera
+finiti. In **PDF e Slide**, nel pannello Esportazione, **Aggiungi al riassunto
+del corso** chiede:
+
+- **Nuovo capitolo**: titolo e posizione;
+- **Sovrascrivi un capitolo esistente**: gia' selezionato se il capitolo di
+  appunti era stato aggiunto prima. La versione precedente finisce nello
+  **Storico** del capitolo e si puo' ripristinare.
+
+Nella pagina materia la sezione **RIASSUNTO DEL CORSO** elenca i capitoli in
+ordine (↑ ↓), con data di aggiornamento e collegamento al capitolo di appunti.
+L'export scrive `Riassunto/Riassunto_corso.<formato>`:
+
+- `.md` con indice; `.docx` con indice di Word;
+- `.tex` e `.pdf` con `\tableofcontents` e capitoli numerati. Il PDF viene
+  compilato con `pdflatex` (MiKTeX o TeX Live: `winget install MiKTeX.MiKTeX`).
+
+**Crea Riassunto Totale** (solo su richiesta) scrive `Riassunto/riassunto_rapido.md`
+con tutte le slide della materia in ordine naturale di nome file (`Lezione 2`
+prima di `Lezione 10`): per ogni PDF usa il capitolo di appunti piu' recente,
+altrimenti lo trascrive al momento. Con piu' anni accademici si puo' scegliere
+quale usare.
+
+### Esame
+
+La sezione **ESAME · DOMANDE D'ESAME** raccoglie gli appelli della materia
+(data, titolo, note, PDF del tema) e le loro domande, piu' il gruppo **Senza
+appello**. Filtri per appello e argomento, **Solo ricorrenti** e ricerca.
+
+- **Importa tema PDF**: il PDF viene copiato in `Esami/`, trascritto e diviso
+  in domande (`Esercizio 1`, `Domanda 2`, `Quesito 3`, elenchi `1.` `2.` in
+  sequenza a inizio riga). L'intestazione del compito viene scartata e la data
+  viene proposta dal nome del file o dal testo. Nella revisione ogni domanda
+  inizia con `=== DOMANDA ===`: si aggiunge o cancella la riga per dividere o
+  unire.
+- Ogni domanda ha numero, testo, **argomento** (una delle slide della materia),
+  soluzione e note.
+- **Uscita anche in…** elenca le domande degli altri appelli dalla piu' simile
+  (confronto sulle parole) e le collega: la domanda risulta "uscita N volte".
+- **Crea flashcard** usa la soluzione come retro (se manca, la chiede).
+- **Esporta tutte (.md)** scrive `Esami/Domande_esame.md`, diviso per appello.
+
+### Condividere una materia (ZIP)
+
+**Esporta ZIP** (pagina materia) crea uno ZIP leggibile anche senza Lectio:
+
+```text
+<Materia>.zip
+  LEGGIMI.md            "Materiale organizzato con Lectio" + link e indice
+  Slide/2025-26/...     slide per anno accademico
+  Documenti/  Appunti/  Riassunto/  Esami/  Trascrizioni/  Flashcard/
+  lectio-materia.json   dati per l'importazione (formato versionato)
+```
+
+Prima di salvare si scelgono le parti con la loro dimensione; i **dati
+personali** (ore studiate, note della materia, dubbi) sono esclusi di default.
+
+**Importa materia (ZIP)** (pagina Materie) mostra un'anteprima e, se la materia
+esiste gia', permette di **unire** (solo file e dati mancanti, senza duplicati)
+o di importare come **nuova materia**. I file vanno nella cartella della
+materia e materiali, capitoli, riassunto, appelli, domande (con argomenti e
+ricorrenze) e flashcard (come schede nuove) tornano collegati. Vengono scartati
+percorsi pericolosi (`..`, assoluti) e tipi di file non previsti. Le
+trascrizioni arrivano come file `.txt` nella cartella `Trascrizioni`.
 
 ---
 
@@ -927,6 +1111,9 @@ ritorno a Markdown riconverte i comandi noti e lascia gli altri come testo.
 
 - **.txt**: testo pulito diviso con `=== SLIDE N ===`; le formule semplici
   diventano leggibili (`\alpha^{2}` -> `α²`).
+- **.md**: Markdown comune (GitHub, Obsidian, contesto per un LLM): formule
+  `$...$`/`$$...$$`, marcatori di slide come commenti `<!-- Slide N -->`,
+  sottolineato `<u>`, immagini copiate in `img/` accanto al file.
 - **.tex**: corpo (`% === Slide N ===`, `\section*`, `itemize`, `enumerate`,
   `\[ ... \]`) oppure documento completo `article` con `amsmath`, `amssymb`,
   `babel` italiano. Le formule display usano `\[ ... \]`, la forma raccomandata
@@ -935,7 +1122,9 @@ ritorno a Markdown riconverte i comandi noti e lascia gli altri come testo.
   di Word, titoli con gli stili Titolo 1/2, elenchi Word, marcatori di slide con
   lo stile "Slide Marker". Opzione per una nuova pagina a ogni slide. Per usare
   stili personalizzati basta copiare un modello Word in
-  `%LOCALAPPDATA%\Lectio\pdf_reference.docx`.
+  `%LOCALAPPDATA%\Lectio\pdf_reference.docx`. Se Pandoc manca (exe
+  pubblicato), al primo export Word Lectio propone di scaricare Pandoc ufficiale
+  da github.com/jgm/pandoc (circa 40 MB) in `%LOCALAPPDATA%\Lectio\pandoc.exe`.
 - Le opzioni **Marcatori e numeri di slide**, **Titoli delle slide** e
   **Preambolo LaTeX** valgono per anteprima, copia ed esportazione.
 
@@ -1281,13 +1470,13 @@ Get-Item .\dist\Lectio.exe | Select-Object Name, Length, VersionInfo
 (Get-Item .\dist\Lectio.exe).VersionInfo.FileVersion
 ```
 
-La versione attesa per questa release e' `1.4.2.0`. Se si distribuisce l'exe a un
+La versione attesa per questa release e' `1.5.0.0`. Se si distribuisce l'exe a un
 altro PC, non serve Python: servono solo `Lectio.exe` e i permessi utente
 normali. Il guardiano hosts viene avviato dallo stesso exe con l'argomento
 interno `--hosts-guard`. Per il download YouTube e per la trascrizione serve
 anche FFmpeg su quel PC; tutte le altre funzioni audio locali funzionano senza
 dipendenze esterne. Il modello di trascrizione viene scaricato al primo uso, se
-manca.
+manca; lo stesso vale per Pandoc al primo export Word.
 
 ### Aggiornare la versione
 
@@ -1405,9 +1594,30 @@ Avviare con `python main.py --debug` per il livello DEBUG.
 ### PDF e Slide: l'esportazione .docx non e' disponibile
 
 Serve Pandoc. Da sorgente lo fornisce `pypandoc_binary` (in `requirements.txt`);
-con l'eseguibile, `build.ps1` copia `pandoc.exe` accanto a `Lectio.exe`. In
-alternativa si puo' installare Pandoc nel `PATH` o copiare `pandoc.exe` nella
-cartella dati.
+con l'eseguibile pubblicato Lectio propone di scaricarlo al primo export Word,
+mentre `build.ps1` lo copia anche accanto a `Lectio.exe`. In alternativa si puo'
+installare Pandoc nel `PATH` o copiare `pandoc.exe` nella cartella dati.
+
+### Riassunto del corso: il PDF non viene creato
+
+Serve una distribuzione LaTeX (`pdflatex`): MiKTeX (`winget install
+MiKTeX.MiKTeX`) o TeX Live. Lectio la cerca nel `PATH` e nelle cartelle
+d'installazione standard. In alternativa si esporta in `.docx` e si salva come
+PDF da Word.
+
+### Sincronizzazione tra PC: "Lectio e' aperto su un altro PC"
+
+Lectio scrive `lectio.lock` nella cartella sincronizzata e lo toglie alla
+chiusura. Se l'altro PC e' stato chiuso da poco, attendere che OneDrive
+sincronizzi e riaprire. Dopo 5 minuti senza segnale il blocco viene ignorato.
+Se l'avviso compare con l'altro PC spento, si puo' scegliere **Apri comunque**.
+
+### Sincronizzazione tra PC: "Copie in conflitto"
+
+Il programma di sincronizzazione ha trovato modifiche fatte su due PC insieme e
+ha salvato una copia (`study_manager-<PC>.db`). Lectio usa `study_manager.db` e
+non tocca le copie; gli snapshot in `Snapshot\` permettono di tornare indietro
+con **Impostazioni → Importa dati**.
 
 ### PDF e Slide: le pagine scansionate restano vuote
 
@@ -1425,6 +1635,13 @@ l'estrazione con Marker o Nougat limitati alle pagine con formule.
 ---
 
 ## 18. Limiti noti
+
+- La sincronizzazione tra PC presume un PC alla volta: non unisce modifiche fatte
+  in contemporanea su due PC.
+- Importando una materia con **Unisci**, capitoli e domande con lo stesso titolo o
+  testo di quelli gia' presenti non vengono sostituiti dalla versione nello ZIP.
+- La divisione automatica dei temi d'esame riconosce i formati piu' comuni: i
+  compiti con una struttura diversa si sistemano nella schermata di revisione.
 
 - Il file hosts non e' un firewall: browser con DNS-over-HTTPS, VPN, proxy o
   risoluzione DNS alternativa possono aggirarlo. Il blocco e' pensato come aiuto
@@ -1511,7 +1728,14 @@ Lectio non invia dati a server remoti, con due eccezioni esplicite:
   leggere il video e scaricarne la traccia;
 - il primo download del modello di trascrizione: `requests` contatta Hugging
   Face per scaricare il file `ggml-*.bin`. Viene inviato solo il normale traffico
-  HTTP necessario al download, senza audio, trascrizioni o dati personali.
+  HTTP necessario al download, senza audio, trascrizioni o dati personali;
+- il download di Pandoc da GitHub, solo se l'utente lo accetta al primo export
+  Word dell'exe pubblicato.
+
+Con la **sincronizzazione tra PC** i dati vengono copiati nella cartella scelta
+dall'utente: e' il suo programma di sincronizzazione (OneDrive, Google Drive,
+Dropbox) a caricarli sul proprio cloud. Lectio non contatta questi servizi. Gli
+**ZIP della materia** escludono per default i dati personali.
 
 Sessioni, tentativi, materiali, eventi, file audio, videolezioni, trascrizioni,
 flashcard, storico dei ripassi, modelli e impostazioni restano sul PC. L'audio

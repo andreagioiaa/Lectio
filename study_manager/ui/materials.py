@@ -15,6 +15,13 @@ from typing import Any, Callable
 import customtkinter as ctk
 
 from ..config import COLORS
+from ..services.subject_folders import files_size
+from ..services.subjects import (
+    ACADEMIC_YEAR_UNKNOWN,
+    academic_year_choices,
+    academic_year_for,
+    normalize_academic_year,
+)
 from ..utils import format_hours, safe_float
 from .formatting import format_event_datetime
 from .pdf_viewer import is_pdf, open_pdf_window
@@ -64,6 +71,20 @@ class MaterialsSection(Card):
             anchor="w",
         )
         self._count_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        # Compare solo se ci sono materiali con il file fuori dalla cartella della materia.
+        self._copy_button = ctk.CTkButton(
+            header,
+            text="",
+            height=32,
+            font=font(10),
+            fg_color="transparent",
+            hover_color=COLORS.surface_hover,
+            border_width=1,
+            border_color=COLORS.border,
+            text_color=COLORS.text_muted,
+            corner_radius=8,
+            command=self._copy_existing,
+        )
         if allow_add:
             ctk.CTkButton(
                 header,
@@ -76,7 +97,7 @@ class MaterialsSection(Card):
                 text_color=COLORS.text,
                 corner_radius=8,
                 command=lambda: self._open_dialog(None),
-            ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(10, 0))
+            ).grid(row=0, column=2, rowspan=2, sticky="e", padx=(10, 0))
 
         self._list = ctk.CTkFrame(self, fg_color="transparent")
         self._list.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 14))
@@ -117,8 +138,90 @@ class MaterialsSection(Card):
                 justify="left",
             ).grid(row=0, column=0, sticky="w", pady=(0, 2))
             return
-        for index, material in enumerate(materials):
-            self._material_row(material, index)
+        self._update_copy_button(materials)
+        years = {normalize_academic_year(row.get("academic_year")) for row in materials}
+        if years == {""}:
+            for index, material in enumerate(materials):
+                self._material_row(material, index)
+            return
+        # Raggruppati per anno accademico, dal piu' recente; "Non indicato" in fondo.
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for material in materials:
+            groups.setdefault(normalize_academic_year(material.get("academic_year")), []).append(material)
+        row = 0
+        ordered = sorted((year for year in groups if year), reverse=True) + ([""] if "" in groups else [])
+        for year in ordered:
+            ctk.CTkLabel(
+                self._list,
+                text=f"A.A. {year}" if year else ACADEMIC_YEAR_UNKNOWN,
+                font=font(10, "bold"),
+                text_color=COLORS.text_muted,
+                anchor="w",
+            ).grid(row=row, column=0, sticky="w", pady=(8 if row else 0, 2))
+            row += 1
+            for material in groups[year]:
+                self._material_row(material, row)
+                row += 1
+
+    # ------------------------------------------------------ copia nella cartella
+    def _outside_materials(self, materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self._subject:
+            return []
+        folders = self.app.subject_folders
+        return [
+            row for row in materials
+            if str(row.get("file_path") or "").strip()
+            and Path(str(row["file_path"])).is_file()
+            and not folders.is_in_subject(str(row["file_path"]), self._subject)
+        ]
+
+    def _update_copy_button(self, materials: list[dict[str, Any]]) -> None:
+        outside = self._outside_materials(materials)
+        if not outside:
+            self._copy_button.grid_remove()
+            return
+        size = files_size(row["file_path"] for row in outside)
+        self._copy_button.configure(
+            text=f"Copia {len(outside)} file nella cartella ({_format_size(size)})"
+        )
+        self._copy_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(10, 0))
+
+    def _copy_existing(self) -> None:
+        materials = self.db.list_materials_for_subject(self._subject)
+        outside = self._outside_materials(materials)
+        if not outside:
+            self.refresh()
+            return
+        size = files_size(row["file_path"] for row in outside)
+        folder = self.app.subject_folders.path_for(self._subject)
+        if not messagebox.askyesno(
+            "Copia nella cartella della materia",
+            f"Copiare {len(outside)} file ({_format_size(size)}) in\n{folder}?\n\n"
+            "Gli originali restano dove sono; il materiale usera' la copia. "
+            "Serve per sincronizzare o condividere la materia.",
+            parent=self.winfo_toplevel(),
+        ):
+            return
+        copied, errors = 0, []
+        for material in outside:
+            try:
+                target = self.app.subject_folders.copy_material(material["file_path"], self._subject)
+                self.db.update_material(
+                    int(material["id"]),
+                    str(material.get("title") or ""),
+                    str(target),
+                    str(material.get("subject") or self._subject),
+                    safe_float(material.get("target_hours", 0)),
+                    material.get("calendar_event_id"),
+                )
+                copied += 1
+            except Exception as exc:
+                self.app.logger.exception("Copia del materiale non riuscita.")
+                errors.append(f"{Path(str(material['file_path'])).name}: {exc}")
+        if errors:
+            messagebox.showwarning("Copia non completata", "\n".join(errors[:8]), parent=self.winfo_toplevel())
+        self.app.toast(f"Copiati {copied} file nella cartella della materia.")
+        self.notify_change()
 
     def notify_change(self) -> None:
         """Aggiorna la sezione e la pagina materia che la contiene."""
@@ -151,6 +254,9 @@ class MaterialsSection(Card):
         ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 1))
 
         meta_parts: list[str] = []
+        year = normalize_academic_year(material.get("academic_year"))
+        if year:
+            meta_parts.append(f"A.A. {year}")
         if material.get("event_title"):
             event_text = str(material["event_title"])
             if material.get("event_start"):
@@ -315,7 +421,7 @@ class MaterialsSection(Card):
         if not messagebox.askyesno(
             "Eliminare il materiale?",
             f"Eliminare '{material.get('title', 'Materiale')}'? "
-            "Il file originale non verra' toccato.",
+            "I file su disco (originale e copia nella cartella della materia) non verranno toccati.",
             parent=self.winfo_toplevel(),
         ):
             return
@@ -346,7 +452,7 @@ class MaterialDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.transient(section.winfo_toplevel())
         set_window_icon(self, self.app.paths["icon"])
-        center_window(self, 640, 590)
+        center_window(self, 640, 680)
         self.grid_columnconfigure(0, weight=1)
         self._build()
         self.grab_set()
@@ -485,13 +591,52 @@ class MaterialDialog(ctk.CTkToplevel):
         self.event_combo.pack(fill="x")
         self.event_combo.set("Nessun evento")
 
+        year_frame = ctk.CTkFrame(form, fg_color="transparent")
+        year_frame.grid(row=4, column=0, sticky="ew", pady=(0, 12))
+        ctk.CTkLabel(
+            year_frame,
+            text="Anno accademico",
+            font=font(11, "bold"),
+            text_color=COLORS.text_muted,
+            anchor="w",
+        ).pack(anchor="w", pady=(0, 5))
+        try:
+            used_years = self.db.list_academic_years()
+        except Exception:
+            used_years = []
+        self.year_combo = ctk.CTkComboBox(
+            year_frame,
+            values=academic_year_choices(used_years) + [ACADEMIC_YEAR_UNKNOWN],
+            height=38,
+            width=200,
+            fg_color=COLORS.surface_alt,
+            border_color=COLORS.border,
+            button_color=COLORS.surface_hover,
+            button_hover_color=COLORS.border,
+            dropdown_fg_color=COLORS.surface,
+            dropdown_hover_color=COLORS.surface_hover,
+            text_color=COLORS.text,
+            font=font(11),
+            dropdown_font=font(11),
+            corner_radius=9,
+        )
+        self.year_combo.pack(anchor="w")
+        self.year_combo.set(academic_year_for())
+        ctk.CTkLabel(
+            year_frame,
+            text="Anno del corso da cui provengono le slide (es. 2025/26). Si puo' anche scrivere.",
+            font=font(9),
+            text_color=COLORS.text_faint,
+            anchor="w",
+        ).pack(anchor="w", pady=(4, 0))
+
         info = Card(self)
         info.grid(row=3, column=0, sticky="ew", padx=28, pady=(4, 16))
         ctk.CTkLabel(
             info,
             text="Le ore studiate si aggiungono automaticamente quando completi un "
-            "Pomodoro avviato da questo materiale. Il file originale non viene "
-            "copiato ne' modificato.",
+            "Pomodoro avviato da questo materiale. Il file viene copiato nella "
+            "cartella della materia (Slide o Documenti); l'originale resta dov'e'.",
             font=font(10),
             text_color=COLORS.text_muted,
             wraplength=560,
@@ -587,6 +732,8 @@ class MaterialDialog(ctk.CTkToplevel):
             self.title_var.set(str(self.material.get("title") or ""))
             self.target_var.set(f"{safe_float(self.material.get('target_hours', 0)):g}")
             self.file_var.set(str(self.material.get("file_path") or ""))
+            year = normalize_academic_year(self.material.get("academic_year"))
+            self.year_combo.set(year or ACADEMIC_YEAR_UNKNOWN)
             if self.allow_subject_change:
                 self.subject_var.set(str(self.material.get("subject") or ""))
         try:
@@ -690,12 +837,26 @@ class MaterialDialog(ctk.CTkToplevel):
                 parent=self,
             )
             return
+        raw_year = self.year_combo.get().strip()
+        year = normalize_academic_year(raw_year)
+        if raw_year and raw_year != ACADEMIC_YEAR_UNKNOWN and not year:
+            messagebox.showerror(
+                "Anno non valido",
+                "Scrivi l'anno accademico come 2025/26 oppure scegli 'Non indicato'.",
+                parent=self,
+            )
+            return
         label = self.event_combo.get()
         try:
             event_id = self._event_ids[self._event_labels.index(label)]
         except (ValueError, IndexError):
             event_id = None
         try:
+            self.app.subject_folder(subject)
+            unchanged = bool(self.material) and _same_file(file_path, str(self.material.get("file_path") or ""))
+            if Path(file_path).is_file() and not unchanged:
+                # Il file scelto viene copiato nella cartella della materia.
+                file_path = str(self.app.subject_folders.copy_material(file_path, subject))
             if self.material:
                 self.db.update_material(
                     int(self.material["id"]),
@@ -704,10 +865,10 @@ class MaterialDialog(ctk.CTkToplevel):
                     subject,
                     target,
                     event_id,
+                    academic_year=year,
                 )
             else:
-                self.db.add_material(title, file_path, subject, target, event_id)
-            self.app.subject_folder(subject)
+                self.db.add_material(title, file_path, subject, target, event_id, academic_year=year)
         except Exception as exc:
             self.app.logger.exception("Salvataggio materiale non riuscito.")
             messagebox.showerror("Salvataggio non riuscito", str(exc), parent=self)
@@ -719,3 +880,17 @@ class MaterialDialog(ctk.CTkToplevel):
         self.destroy()
         self.app.toast("Materiale salvato.")
         self.section.notify_change()
+
+
+def _same_file(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _format_size(size: int) -> str:
+    if size >= 1024 ** 3:
+        return f"{size / 1024 ** 3:.1f} GB"
+    if size >= 1024 ** 2:
+        return f"{size / 1024 ** 2:.1f} MB"
+    return f"{max(1, round(size / 1024))} KB"

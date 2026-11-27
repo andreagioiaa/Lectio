@@ -8,6 +8,7 @@ frontali e studio individuale.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time
 from typing import Any
 
@@ -145,3 +146,51 @@ def exam_countdown(
         "hours": hours,
         "minutes": minutes,
     }
+
+
+# ---------------------------------------------------------------------------
+# Anno accademico dei materiali
+# ---------------------------------------------------------------------------
+# L'anno accademico italiano inizia a settembre/ottobre: da settembre in poi
+# si e' gia' nel nuovo anno (es. 15/09/2025 -> 2025/26).
+ACADEMIC_YEAR_START_MONTH = 9
+ACADEMIC_YEAR_UNKNOWN = "Non indicato"
+
+
+def academic_year_for(day: date | datetime | None = None) -> str:
+    """Anno accademico che contiene ``day`` (default: oggi), nel formato ``2025/26``."""
+    current = day or now_local()
+    start = current.year if current.month >= ACADEMIC_YEAR_START_MONTH else current.year - 1
+    return f"{start}/{(start + 1) % 100:02d}"
+
+
+def normalize_academic_year(value: Any) -> str:
+    """``2025/26``, ``2025-2026``, ``2025/2026``, ``25/26`` -> ``2025/26``; vuoto se non valido."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.fullmatch(r"(\d{2}|\d{4})\s*[/\-–]\s*(\d{2}|\d{4})", text)
+    if not match:
+        return ""
+    first = int(match.group(1))
+    if first < 100:
+        first += 2000
+    second = int(match.group(2)) % 100
+    if second != (first + 1) % 100 or not 1950 <= first <= 2200:
+        return ""
+    return f"{first}/{second:02d}"
+
+
+def academic_year_choices(existing: Any = (), around: date | datetime | None = None, back: int = 6) -> list[str]:
+    """Anni proposti nel menu: l'anno corrente, i precedenti e quelli gia' usati."""
+    current = academic_year_for(around)
+    start = int(current[:4])
+    values = {f"{year}/{(year + 1) % 100:02d}" for year in range(start - back, start + 2)}
+    values.update(year for year in (normalize_academic_year(item) for item in existing) if year)
+    return sorted(values, reverse=True)
+
+
+def academic_year_folder(value: Any) -> str:
+    """Nome di cartella per un anno (``2025/26`` -> ``2025-26``); vuoto se non indicato."""
+    year = normalize_academic_year(value)
+    return year.replace("/", "-") if year else ""

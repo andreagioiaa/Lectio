@@ -6,16 +6,22 @@ generati da Lectio:
 
 * ``Trascrizioni`` - i .txt prodotti dalle videolezioni;
 * ``Appunti``      - TXT/LaTeX/Word esportati dal modulo PDF e Slide;
-* ``Flashcard``    - export CSV delle flashcard della materia.
+* ``Flashcard``    - export CSV delle flashcard della materia;
+* ``Slide``        - copia dei PDF e delle presentazioni aggiunti come materiali;
+* ``Documenti``    - copia degli altri documenti (creata solo quando serve);
+* ``Riassunto``    - riassunto del corso e riassunto totale (creata solo quando serve);
+* ``Esami``        - PDF dei temi d'esame e ``Domande_esame.md`` (creata solo quando serve).
 
-I file originali scelti dall'utente (PDF, video, dispense) non vengono mai
-copiati ne' spostati: restano dove sono e sono solo collegati alla materia nel
-database.
+Dalla v1.5 i materiali aggiunti vengono **copiati** nella cartella della materia
+(l'originale resta dove era): cosi' la cartella ``Materie`` contiene tutto il
+necessario per essere sincronizzata su un altro PC o condivisa. I video delle
+lezioni restano invece dove sono, perche' troppo pesanti.
 """
 
 from __future__ import annotations
 
 import csv
+import filecmp
 import logging
 import os
 import re
@@ -31,12 +37,24 @@ LOGGER = logging.getLogger(__name__)
 KIND_TRANSCRIPTS = "transcripts"
 KIND_NOTES = "notes"
 KIND_FLASHCARDS = "flashcards"
+KIND_SLIDES = "slides"
+KIND_DOCUMENTS = "documents"
+KIND_SUMMARY = "summary"
+KIND_EXAMS = "exams"
 
 SUBFOLDERS: dict[str, str] = {
     KIND_TRANSCRIPTS: "Trascrizioni",
     KIND_NOTES: "Appunti",
     KIND_FLASHCARDS: "Flashcard",
+    KIND_SLIDES: "Slide",
 }
+# Sottocartelle create solo quando ci finisce dentro un file.
+ON_DEMAND_SUBFOLDERS: dict[str, str] = {
+    KIND_DOCUMENTS: "Documenti",
+    KIND_SUMMARY: "Riassunto",
+    KIND_EXAMS: "Esami",
+}
+SLIDE_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".odp", ".key"}
 
 FLASHCARD_EXPORT_NAME = "Flashcard.csv"
 
@@ -69,6 +87,24 @@ def is_inside(path: str | Path, folder: str | Path) -> bool:
     child = os.path.normcase(os.path.abspath(str(path)))
     parent = os.path.normcase(os.path.abspath(str(folder)))
     return child == parent or child.startswith(parent.rstrip("\\/") + os.sep)
+
+
+def _same_content(a: Path, b: Path) -> bool:
+    try:
+        return a.stat().st_size == b.stat().st_size and filecmp.cmp(a, b, shallow=False)
+    except OSError:
+        return False
+
+
+def files_size(paths: Iterable[str | Path]) -> int:
+    """Dimensione totale in byte dei file esistenti."""
+    total = 0
+    for path in paths:
+        try:
+            total += Path(path).stat().st_size
+        except OSError:
+            continue
+    return total
 
 
 def unique_target(folder: Path, name: str) -> Path:
@@ -127,7 +163,50 @@ class SubjectFolders:
         folder = self.ensure(subject)
         if folder is None:
             return None
+        if kind in ON_DEMAND_SUBFOLDERS:
+            target = folder / ON_DEMAND_SUBFOLDERS[kind]
+            target.mkdir(parents=True, exist_ok=True)
+            return target
         return folder / SUBFOLDERS[kind]
+
+    # ----------------------------------------------------------- materiali
+    def is_in_subject(self, path: str | Path, subject: str) -> bool:
+        """``True`` se il file sta gia' dentro la cartella della materia."""
+        folder = self.path_for(subject)
+        return bool(path) and folder is not None and is_inside(path, folder)
+
+    def material_kind(self, path: str | Path) -> str:
+        return KIND_SLIDES if Path(path).suffix.lower() in SLIDE_EXTENSIONS else KIND_DOCUMENTS
+
+    def copy_material(self, source: str | Path, subject: str, kind: str | None = None) -> Path:
+        """Copia un materiale nella cartella della materia e restituisce il percorso della copia.
+
+        - se il file e' gia' nella cartella della materia non viene copiato;
+        - se nella destinazione c'e' gia' un file identico viene riusato;
+        - se c'e' un file diverso con lo stesso nome, la copia riceve `` (2)``, `` (3)``...
+
+        L'originale non viene mai spostato ne' modificato.
+        """
+        src = Path(source)
+        if self.is_in_subject(src, subject):
+            return src
+        if not src.is_file():
+            raise FileNotFoundError(f"File non trovato: {src}")
+        folder = self.subfolder(subject, kind or self.material_kind(src))
+        if folder is None:
+            raise OSError("Cartella della materia non disponibile.")
+        folder.mkdir(parents=True, exist_ok=True)
+        existing = folder / src.name
+        if existing.is_file() and _same_content(src, existing):
+            return existing
+        target = unique_target(folder, src.name)
+        temp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.part")
+        try:
+            shutil.copy2(src, temp)
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+        return target
 
     def ensure_all(self, subjects: Iterable[str]) -> int:
         created = 0

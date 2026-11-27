@@ -31,6 +31,7 @@ from ..database import normalize_hex
 from ..services.uac import is_admin
 from ..utils import safe_float, safe_int
 from .calendar_help import TAB_API, TAB_ICAL, open_calendar_help
+from .sync_card import SyncCard
 from .theme import font
 from .widgets import Card, PageHeader, clear_children, separator
 
@@ -70,6 +71,7 @@ class SettingsView(ctk.CTkFrame):
         self._build_timer_card(content)
         self._build_behavior_card(content)
         self._build_storage_card(content)
+        SyncCard(content, app).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         self._build_backup_card(content)
         self._build_ical_card(content)
         self._build_google_card(content)
@@ -339,7 +341,7 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_backup_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -403,7 +405,7 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_google_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -537,7 +539,7 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_ical_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,

@@ -221,6 +221,9 @@ def import_backup(
         db.restore_tables(tables)
         if preserved:
             db.set_settings(preserved)
+        # I backup precedenti alla v1.5 hanno percorsi assoluti: quelli dentro le
+        # cartelle gestite da Lectio diventano relativi.
+        db.relativize_stored_paths()
         extracted = _extract_transcripts(path, Path(paths["transcripts"]))
         # Se un percorso assoluto del backup non esiste su questo PC, prova a
         # ritrovare il .txt nella cartella trascrizioni corrente.

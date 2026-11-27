@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 APP_NAME = "Lectio"
 APP_TITLE = "Lectio - Gestionale Studio & Analytics"
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.5.0"
 
 DEFAULT_SETTINGS: dict[str, str] = {
     "pomodoro_work": "25",

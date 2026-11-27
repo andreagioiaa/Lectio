@@ -25,6 +25,7 @@ from ..services.blocker import BlockerController
 from ..services.calendar_sync import CalendarSyncService
 from ..services.pomodoro_service import PomodoroService
 from ..services.subject_folders import SubjectFolders
+from ..services import sync_folder as sync
 from ..services.transcription import TranscriptionController, transcription_backend_info
 from ..services.youtube_audio import youtube_backend_info
 from ..utils import safe_float
@@ -64,7 +65,9 @@ class LectioApp(ctk.CTk):
         install_text_shortcuts(self)
         self.paths = ensure_data_layout()
         self.logger = logging.getLogger("lectio.app")
-        self.db = Database(self.paths["db"])
+        self._heartbeat_job: str | None = None
+        self._check_sync_folder()
+        self.db = Database(self.paths["db"], journal_mode="DELETE" if self.paths["synced"] else "WAL")
         interrupted = self.db.recover_interrupted_video_jobs()
         if interrupted:
             self.logger.info(
@@ -75,6 +78,14 @@ class LectioApp(ctk.CTk):
         self.audio = AudioController(self.paths["sounds"])
         self.transcriptions = TranscriptionController(self.paths)
         self.subject_folders = SubjectFolders(self.paths["subjects"])
+        # I file dentro ``Materie`` e nella cartella dati si salvano con percorso relativo.
+        self.db.set_path_roots(subjects=self.paths["subjects"], data=self.paths["shared"])
+        try:
+            converted = self.db.relativize_stored_paths()
+            if converted:
+                self.logger.info("Convertiti %s percorsi in forma relativa.", converted)
+        except Exception:
+            self.logger.exception("Conversione dei percorsi in forma relativa non riuscita.")
         try:
             self.subject_folders.ensure_all(self.db.list_subject_tags())
         except Exception:
@@ -130,6 +141,9 @@ class LectioApp(ctk.CTk):
         self._build_content()
         self._build_toast()
         self._setup_signals()
+        if self.paths["synced"]:
+            self._sync_heartbeat()
+            self.after(1500, self._warn_conflict_copies)
         if current_theme() == THEME_LIGHT:
             # i widget sono nati con la palette chiara: restano da convertire solo
             # i pochi colori scritti direttamente nelle viste
@@ -1104,6 +1118,68 @@ class LectioApp(ctk.CTk):
         except tk.TclError:
             pass
 
+    # ------------------------------------------------------------ sincronizzazione
+    def _check_sync_folder(self) -> None:
+        """All'avvio: cartella sincronizzata raggiungibile e non aperta su un altro PC."""
+        folder = self.paths.get("sync_folder")
+        if folder is None:
+            return
+        self.withdraw()
+        while not self.paths["synced"]:
+            if messagebox.askretrycancel(
+                "Cartella sincronizzata non raggiungibile",
+                f"La cartella dei dati sincronizzati non e' raggiungibile:\n{folder}\n\n"
+                "Controlla che OneDrive (o il programma di sincronizzazione) sia attivo e la cartella "
+                "scaricata, poi premi Riprova.",
+                icon="warning", parent=self,
+            ):
+                self.paths = ensure_data_layout()
+                continue
+            if messagebox.askyesno(
+                "Usare i dati di questo PC?",
+                "Aprire Lectio con i dati salvati solo su questo PC?\n\nLe modifiche fatte ora non "
+                "finiranno nella cartella sincronizzata. Al prossimo avvio Lectio la cerchera' di nuovo.",
+                parent=self,
+            ):
+                self.deiconify()
+                return
+            self.destroy()
+            raise SystemExit(0)
+        conflict = sync.lock_conflict(Path(folder))
+        if conflict is not None and not messagebox.askyesno(
+            "Lectio e' aperto su un altro PC",
+            f"Lectio risulta aperto su «{conflict.get('pc')}» (ultimo segnale alle "
+            f"{str(conflict.get('heartbeat'))[11:16]}).\n\nUsa Lectio su un PC alla volta: chiudilo li', "
+            "aspetta che la sincronizzazione finisca e riapri qui.\n\nAprire comunque? Le modifiche "
+            "fatte contemporaneamente sui due PC potrebbero andare perse.",
+            icon="warning", parent=self,
+        ):
+            self.destroy()
+            raise SystemExit(0)
+        self.deiconify()
+
+    def _sync_heartbeat(self) -> None:
+        """Aggiorna ``lectio.lock`` ogni minuto, cosi' gli altri PC sanno che Lectio e' aperto qui."""
+        try:
+            sync.write_lock(Path(self.paths["shared"]))
+        except OSError:
+            self.logger.warning("Aggiornamento di lectio.lock non riuscito.", exc_info=True)
+        if not self._closing:
+            self._heartbeat_job = self.after(sync.HEARTBEAT_SECONDS * 1000, self._sync_heartbeat)
+
+    def _warn_conflict_copies(self) -> None:
+        copies = sync.conflict_copies(Path(self.paths["shared"]))
+        if copies:
+            messagebox.showwarning(
+                "Copie in conflitto",
+                "Nella cartella sincronizzata ci sono copie del database create dal programma di "
+                "sincronizzazione (Lectio e' stato usato su due PC insieme):\n\n"
+                + "\n".join(f"• {path.name}" for path in copies[:5])
+                + "\n\nLectio usa study_manager.db. Le copie non vengono toccate: se ti servono dati "
+                "che mancano, chiedi aiuto prima di cancellarle.",
+                parent=self,
+            )
+
     def emergency_shutdown(self) -> None:
         if self._shutdown_done:
             return
@@ -1151,10 +1227,25 @@ class LectioApp(ctk.CTk):
             self.transcriptions.shutdown()
         except Exception:
             self.logger.exception("Chiusura trascrizione non riuscita.")
+        if self.paths.get("synced"):
+            if self._heartbeat_job is not None:
+                try:
+                    self.after_cancel(self._heartbeat_job)
+                except (tk.TclError, ValueError):
+                    pass
+            try:
+                sync.write_snapshot(self.db, self.paths)
+            except Exception:
+                self.logger.exception("Snapshot di chiusura non riuscito.")
         try:
             self.db.close_all()
         except Exception:
             self.logger.exception("Chiusura database non riuscita.")
+        if self.paths.get("synced"):
+            try:
+                sync.release_lock(Path(self.paths["shared"]))
+            except OSError:
+                self.logger.warning("Rimozione di lectio.lock non riuscita.", exc_info=True)
 
 
 def run_app(debug: bool = False, smoke_test: bool = False) -> int:

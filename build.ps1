@@ -75,7 +75,8 @@ try {
     # Pandoc per l'esportazione Word: copiato accanto all'exe (non dentro, per non
     # estrarre ~150 MB a ogni avvio). Lectio lo cerca in quella cartella.
     $ErrorActionPreference = "Continue"
-    $pandocSrc = & $venvPython -c "import pypandoc; print(pypandoc.get_pandoc_path())" 2>$null
+    # pypandoc-binary 1.17 restituisce il percorso senza ".exe": si cerca il file reale.
+    $pandocSrc = & $venvPython -c "import pathlib, pypandoc; p = pathlib.Path(pypandoc.get_pandoc_path()); c = [x for x in (p, p.with_name(p.name + '.exe')) if x.is_file()]; print(c[0] if c else '')" 2>$null
     $pandocExit = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
 

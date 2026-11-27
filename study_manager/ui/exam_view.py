@@ -33,6 +33,7 @@ from ..services.exam_questions import (
     session_label,
     similar_questions,
     split_exam_text,
+    split_pasted_questions,
 )
 from ..services.subject_folders import KIND_EXAMS
 from ..services.subjects import format_exam_date, parse_exam_date
@@ -100,6 +101,8 @@ class ExamSection(_SectionBase):
         self.button(self.header_actions, "+  Appello", 92, self.add_session).pack(side="left", padx=(0, 6))
         self.button(self.header_actions, "+  Domanda", 96, lambda: self.add_question(None)).pack(
             side="left", padx=(0, 6))
+        self.button(self.header_actions, "+  Piu' domande", 118, lambda: self.add_questions(None)).pack(
+            side="left", padx=(0, 6))
         self.import_button = self.button(self.header_actions, "Importa tema PDF", 130, self.import_pdf, primary=True)
         self.import_button.pack(side="left")
 
@@ -111,7 +114,8 @@ class ExamSection(_SectionBase):
         )
         if not questions and not sessions:
             self.empty("Registra gli appelli e le loro domande: «Importa tema PDF» trascrive il testo del "
-                       "compito e propone la divisione in domande; «+ Domanda» per quelle raccolte a voce. "
+                       "compito (anche piu' PDF insieme) e propone la divisione in domande; «+ Domanda» o "
+                       "«+ Piu' domande» per quelle raccolte a voce. "
                        "Ogni domanda si collega a una slide (argomento) e a quelle uguali di altri appelli.")
             return
 
@@ -226,6 +230,7 @@ class ExamSection(_SectionBase):
             self.button(actions, "Apri PDF", 74, lambda: _open_file(self, str(session["pdf_path"]))).pack(
                 side="left", padx=(0, 4))
         self.button(actions, "+ Domanda", 84, lambda: self.add_question(session_id)).pack(side="left", padx=(0, 4))
+        self.button(actions, "+ Piu'", 60, lambda: self.add_questions(session_id)).pack(side="left", padx=(0, 4))
         if session is not None:
             self.button(actions, "Modifica", 70, lambda: self.edit_session(session)).pack(side="left", padx=(0, 4))
             self.button(actions, "Elimina", 64, lambda: self.delete_session(session)).pack(side="left")
@@ -297,6 +302,18 @@ class ExamSection(_SectionBase):
         self.db.add_exam_question(self.subject, **result)
         self._changed()
 
+    def add_questions(self, session_id: int | None) -> None:
+        """Piu' domande in un colpo solo: testo incollato, diviso con le righe separatrici."""
+        result = ExamBulkQuestionsDialog(self, self.sessions, self.topics, session_id=session_id).show()
+        if result is None:
+            return
+        start = self.db.next_exam_question_number(result["session_id"], self.subject)
+        for offset, question in enumerate(result["questions"]):
+            self.db.add_exam_question(self.subject, question["text"], result["session_id"], start + offset,
+                                      material_id=result["material_id"])
+        self.app.toast(f"Aggiunte {_plural(len(result['questions']), 'domanda', 'domande')}.")
+        self._changed()
+
     def edit_question(self, question: dict[str, Any]) -> None:
         result = ExamQuestionDialog(self, self.sessions, self.topics, question=question).show()
         if result is None:
@@ -359,50 +376,79 @@ class ExamSection(_SectionBase):
 
     # -------------------------------------------------------------- import PDF
     def import_pdf(self) -> None:
-        path = filedialog.askopenfilename(parent=self.winfo_toplevel(), title="Tema d'esame (PDF)",
-                                          filetypes=[("PDF", "*.pdf")])
-        if not path:
+        """Importa uno o piu' temi d'esame (PDF): uno alla volta, ognuno con la sua revisione."""
+        paths = list(filedialog.askopenfilenames(parent=self.winfo_toplevel(),
+                                                 title="Temi d'esame (PDF, anche piu' di uno)",
+                                                 filetypes=[("PDF", "*.pdf")]) or [])
+        if not paths:
             return
         folder = self.app.subject_folder(self.subject, KIND_EXAMS)
         if folder is None:
             return
+        self.import_button.configure(state="disabled")
+        self._import_queue(paths, 0, {"sessions": 0, "questions": 0, "errors": []})
+
+    def _import_queue(self, paths: list[str], index: int, totals: dict[str, Any]) -> None:
+        """Trascrive ``paths[index]``, mostra la revisione e passa al successivo."""
+        total = len(paths)
+        if index >= total:
+            self._finish_import(totals, total)
+            return
+        position = f" ({index + 1} di {total})" if total > 1 else ""
+        path = paths[index]
         try:
             copy = self.app.subject_folders.copy_material(path, self.subject, KIND_EXAMS)
         except OSError as exc:
-            messagebox.showerror("Importa tema PDF", f"Copia del PDF non riuscita:\n{exc}", parent=self.winfo_toplevel())
+            totals["errors"].append(f"{Path(path).name}: copia non riuscita ({exc})")
+            self._import_queue(paths, index + 1, totals)
             return
         pdf_view = getattr(self.app, "views", {}).get("pdf")
         options = pdf_view.extract_options() if pdf_view is not None and hasattr(pdf_view, "extract_options") else None
         cancel = threading.Event()
-        progress = ProgressDialog(self.app, "Importa tema d'esame", f"Trascrivo {copy.name}…", on_cancel=cancel.set)
-        self.import_button.configure(state="disabled")
+        progress = ProgressDialog(self.app, f"Importa tema d'esame{position}", f"Trascrivo {copy.name}…",
+                                  on_cancel=cancel.set)
 
         def report(fraction: float, message: str) -> None:
             self.app.post(lambda: progress.update_progress(fraction, message))
 
         def done(source_text: str) -> None:
             progress.close()
-            self._enable_import()
             questions = split_exam_text(source_text)
             result = ExamReviewDialog(self.app, copy.name, guess_exam_date(copy.stem, source_text[:2000]),
-                                      questions).show()
-            if result is None:
-                return
-            session_id = self.db.add_exam_session(self.subject, result["exam_date"], result["title"], str(copy))
-            for question in result["questions"]:
-                self.db.add_exam_question(self.subject, question["text"], session_id, question["number"])
-            self.app.toast(f"Appello importato con {len(result['questions'])} domande.")
-            self._changed()
+                                      questions, position=position).show()
+            if result is not None:
+                session_id = self.db.add_exam_session(self.subject, result["exam_date"], result["title"], str(copy))
+                for question in result["questions"]:
+                    self.db.add_exam_question(self.subject, question["text"], session_id, question["number"])
+                totals["sessions"] += 1
+                totals["questions"] += len(result["questions"])
+            self._import_queue(paths, index + 1, totals)
 
         def failed(exc: BaseException) -> None:
             progress.close()
-            self._enable_import()
             if isinstance(exc, InterruptedError):
-                self.app.toast("Importazione annullata.")
+                # «Annulla» durante la trascrizione ferma anche i file successivi.
+                self._finish_import(totals, total, cancelled=True)
                 return
-            messagebox.showerror("Importa tema PDF", f"Trascrizione non riuscita:\n{exc}", parent=self.app)
+            totals["errors"].append(f"{copy.name}: trascrizione non riuscita ({exc})")
+            self._import_queue(paths, index + 1, totals)
 
         run_in_background(self.app, lambda: convert_pdf_source(copy, report, cancel, options), done, failed)
+
+    def _finish_import(self, totals: dict[str, Any], total: int, cancelled: bool = False) -> None:
+        self._enable_import()
+        if totals["errors"]:
+            messagebox.showwarning("Importa temi PDF", "\n".join(totals["errors"][:10]), parent=self.app)
+        if totals["sessions"]:
+            text = (f"Appello importato con {_plural(totals['questions'], 'domanda', 'domande')}."
+                    if totals["sessions"] == 1 else
+                    f"Importati {totals['sessions']} appelli con {_plural(totals['questions'], 'domanda', 'domande')}.")
+            if cancelled:
+                text += " Importazione interrotta."
+            self.app.toast(text)
+            self._changed()
+        elif cancelled:
+            self.app.toast("Importazione annullata.")
 
     def _enable_import(self) -> None:
         try:
@@ -538,16 +584,90 @@ class ExamQuestionDialog(_Modal):
         self.close()
 
 
+class ExamBulkQuestionsDialog(_Modal):
+    """Piu' domande insieme. ``show()`` -> ``{"session_id", "material_id", "questions"}`` o None."""
+
+    def __init__(self, parent, sessions: list[dict[str, Any]], topics: list[tuple[int, str]],
+                 session_id: int | None = None):
+        super().__init__(parent, "Aggiungi piu' domande")
+        self.heading(
+            "Aggiungi piu' domande",
+            "Incolla o scrivi le domande lasciando una riga vuota fra una e l'altra. Se una domanda contiene "
+            f"righe vuote, separa le domande con una riga «{QUESTION_SEPARATOR}». La numerazione continua "
+            "dopo le domande gia' presenti nell'appello.",
+            wrap=600,
+        )
+        self._session_ids: dict[str, int | None] = {NO_SESSION: None}
+        for session in sessions:
+            name = session_label(session)
+            if name in self._session_ids:
+                name = f"{name} (#{session['id']})"
+            self._session_ids[name] = int(session["id"])
+        self._topic_ids: dict[str, int | None] = {NO_TOPIC: None}
+        for material_id, title in topics:
+            name = title if title not in self._topic_ids else f"{title} (#{material_id})"
+            self._topic_ids[name] = material_id
+
+        form = ctk.CTkFrame(self.body, fg_color="transparent")
+        form.pack(fill="x", padx=16, pady=(0, 6))
+        form.grid_columnconfigure((0, 1), weight=1)
+        self.label(form, "Appello").grid(row=0, column=0, sticky="w")
+        self.label(form, "Argomento (slide) per tutte").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.session_combo = _combo(form, list(self._session_ids))
+        self.session_combo.set(next((k for k, v in self._session_ids.items() if v == session_id), NO_SESSION))
+        self.session_combo.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.topic_combo = _combo(form, list(self._topic_ids))
+        self.topic_combo.set(NO_TOPIC)
+        self.topic_combo.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(4, 0))
+        tools = ctk.CTkFrame(self.body, fg_color="transparent")
+        tools.pack(fill="x", padx=16, pady=(8, 4))
+        self.count_label = ctk.CTkLabel(tools, text="", font=font(10, "bold"), text_color=COLORS.accent, anchor="w")
+        self.count_label.pack(side="left")
+        buttons = ctk.CTkFrame(self.body, fg_color="transparent")
+        buttons.pack(side="bottom", fill="x", padx=16, pady=(4, 14))
+        buttons.grid_columnconfigure(0, weight=1)
+        self.action(buttons, "Annulla", self.cancel).grid(row=0, column=1, padx=(0, 6))
+        self.action(buttons, "Aggiungi domande", self.confirm, primary=True, width=140).grid(row=0, column=2)
+        self.editor = ctk.CTkTextbox(self.body, height=300, width=620, font=font(12), fg_color=COLORS.surface_alt,
+                                     border_color=COLORS.border, border_width=1, text_color=COLORS.text, wrap="word")
+        self.editor.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        self.editor.bind("<KeyRelease>", lambda _e: self._update_count())
+        self.editor.bind("<<Paste>>", lambda _e: self.after(10, self._update_count))
+        self._update_count()
+        self.place(660)
+        self.after(60, lambda: self.editor.focus_set() if self.winfo_exists() else None)
+
+    def _questions(self) -> list[dict[str, Any]]:
+        return split_pasted_questions(self.editor.get("1.0", "end"))
+
+    def _update_count(self) -> None:
+        count = len(self._questions())
+        self.count_label.configure(text=f"{_plural(count, 'domanda', 'domande')} trovate")
+
+    def confirm(self) -> None:
+        questions = self._questions()
+        if not questions:
+            messagebox.showwarning("Domande", "Scrivi o incolla almeno una domanda.", parent=self)
+            return
+        self.result = {
+            "session_id": self._session_ids.get(self.session_combo.get()),
+            "material_id": self._topic_ids.get(self.topic_combo.get()),
+            "questions": questions,
+        }
+        self.close()
+
+
 class ExamReviewDialog(_Modal):
     """Revisione della divisione in domande di un tema PDF.
 
     ``show()`` -> ``{"exam_date", "title", "questions": [{"number", "text"}]}`` o None.
     """
 
-    def __init__(self, parent, file_name: str, exam_date: str, questions: list[dict[str, Any]]):
+    def __init__(self, parent, file_name: str, exam_date: str, questions: list[dict[str, Any]],
+                 position: str = ""):
         super().__init__(parent, "Revisione del tema d'esame")
         self.heading(
-            f"Revisione · {file_name}",
+            f"Revisione · {file_name}{position}",
             f"Ogni domanda inizia con una riga «{QUESTION_SEPARATOR}». Per dividere una domanda aggiungi la "
             "riga dove serve, per unirne due cancellala. Il testo prima della prima domanda (intestazione "
             "del compito) e' gia' stato tolto.",
@@ -571,7 +691,8 @@ class ExamReviewDialog(_Modal):
         buttons = ctk.CTkFrame(self.body, fg_color="transparent")
         buttons.pack(side="bottom", fill="x", padx=16, pady=(4, 14))
         buttons.grid_columnconfigure(0, weight=1)
-        self.action(buttons, "Annulla", self.cancel).grid(row=0, column=1, padx=(0, 6))
+        self.action(buttons, "Salta questo tema" if position else "Annulla", self.cancel,
+                    width=140 if position else 110).grid(row=0, column=1, padx=(0, 6))
         self.action(buttons, "Salva appello", self.confirm, primary=True, width=130).grid(row=0, column=2)
         self.editor = ctk.CTkTextbox(self.body, height=320, width=640, font=font(12), fg_color=COLORS.surface_alt,
                                      border_color=COLORS.border, border_width=1, text_color=COLORS.text, wrap="word")

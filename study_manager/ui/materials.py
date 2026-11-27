@@ -15,7 +15,13 @@ from typing import Any, Callable
 import customtkinter as ctk
 
 from ..config import COLORS
-from ..services.subject_folders import files_size
+from ..services.course_summary import (
+    STATUS_DONE,
+    STATUS_IN_PROGRESS,
+    STATUS_TODO,
+    material_status,
+)
+from ..services.subject_folders import SLIDE_EXTENSIONS, files_size
 from ..services.subjects import (
     ACADEMIC_YEAR_UNKNOWN,
     academic_year_choices,
@@ -31,6 +37,25 @@ from .widgets import Card, center_window, clear_children, set_window_icon
 
 ORPHAN_SUBJECT = "Materiali senza materia"
 ORPHAN_SUBJECT_KEY = "\x00lectio-orphan-materials"
+
+# Etichetta e colore del titolo per lo stato di studio delle slide.
+STATUS_LABELS = {
+    STATUS_TODO: "Da iniziare",
+    STATUS_IN_PROGRESS: "In corso",
+    STATUS_DONE: "Completata",
+}
+
+
+def status_color(status: str) -> str:
+    return {
+        STATUS_TODO: COLORS.red,
+        STATUS_IN_PROGRESS: COLORS.amber,
+        STATUS_DONE: COLORS.green,
+    }.get(status, COLORS.text)
+
+
+def is_slide(material: dict[str, Any]) -> bool:
+    return Path(str(material.get("file_path") or "")).suffix.lower() in SLIDE_EXTENSIONS
 
 
 class MaterialsSection(Card):
@@ -112,12 +137,24 @@ class MaterialsSection(Card):
         else:
             materials = self.db.list_materials_without_subject()
         clear_children(self._list)
+        self._summary_paths: set[str] = set()
+        self._notes_paths: set[str] = set()
+        if self._subject:
+            try:
+                self._summary_paths = self.db.summary_pdf_paths(self._subject)
+                self._notes_paths = self.db.note_block_pdf_paths(self._subject)
+            except Exception:
+                self.app.logger.debug("Stato delle slide non disponibile.", exc_info=True)
         target = sum(safe_float(row.get("target_hours", 0)) for row in materials)
         logged = sum(safe_float(row.get("logged_hours", 0)) for row in materials)
         if materials:
             detail = f"{len(materials)} file · {format_hours(logged)} registrate"
             if target > 0:
                 detail += f" su {format_hours(target)} previste"
+            slides = [row for row in materials if is_slide(row)]
+            if slides:
+                done = sum(1 for row in slides if self._status(row) == STATUS_DONE)
+                detail += f" · slide completate {done}/{len(slides)}"
             self._count_label.configure(text=detail)
         else:
             self._count_label.configure(text="Nessun file collegato")
@@ -162,6 +199,9 @@ class MaterialsSection(Card):
             for material in groups[year]:
                 self._material_row(material, row)
                 row += 1
+
+    def _status(self, material: dict[str, Any]) -> str:
+        return material_status(material, self._summary_paths, self._notes_paths)
 
     # ------------------------------------------------------ copia nella cartella
     def _outside_materials(self, materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -243,17 +283,24 @@ class MaterialsSection(Card):
         card.grid_columnconfigure(0, weight=1)
 
         title = str(material.get("title") or "Materiale")
+        slide = is_slide(material)
+        status = self._status(material) if slide else ""
         ctk.CTkLabel(
             card,
             text=title,
             font=font(13, "bold"),
-            text_color=COLORS.text,
+            text_color=status_color(status) if slide else COLORS.text,
             anchor="w",
             wraplength=380,
             justify="left",
         ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 1))
 
         meta_parts: list[str] = []
+        if slide:
+            label = STATUS_LABELS[status]
+            if status == STATUS_DONE and not str(material.get("completed_at") or "").strip():
+                label += " (nel riassunto del corso)"
+            meta_parts.append(label)
         year = normalize_academic_year(material.get("academic_year"))
         if year:
             meta_parts.append(f"A.A. {year}")
@@ -311,13 +358,13 @@ class MaterialsSection(Card):
             actions,
             "Apri file",
             78,
-            lambda path=file_path: self._open_file(path),
+            lambda value=dict(material): self._open_material(value),
         ).pack(side="left", padx=(0, 4))
         self._action(
             actions,
             "Studia ora",
             86,
-            lambda value=dict(material): self.app.start_from_material(value),
+            lambda value=dict(material): self._study(value),
             primary=True,
         ).pack(side="left", padx=4)
         self._action(
@@ -326,6 +373,16 @@ class MaterialsSection(Card):
             90,
             lambda material_id=int(material["id"]): self._add_hours(material_id),
         ).pack(side="left", padx=4)
+        if slide:
+            completed = bool(str(material.get("completed_at") or "").strip())
+            self._action(
+                actions,
+                "Riapri" if completed else "Completata",
+                84,
+                lambda material_id=int(material["id"]), value=not completed: self._set_completed(
+                    material_id, value
+                ),
+            ).pack(side="left", padx=4)
         self._action(
             actions,
             "Modifica",
@@ -373,14 +430,38 @@ class MaterialsSection(Card):
             allow_subject_change=self._allow_subject_change,
         )
 
-    def _open_file(self, file_path: str) -> None:
+    def _mark_opened(self, material: dict[str, Any]) -> None:
+        """Prima apertura di una slide: passa da «Da iniziare» a «In corso»."""
+        if str(material.get("opened_at") or "").strip():
+            return
+        try:
+            self.db.mark_material_opened(int(material["id"]))
+        except Exception:
+            self.app.logger.debug("Stato 'aperta' della slide non salvato.", exc_info=True)
+            return
+        self.after(50, self.notify_change)
+
+    def _study(self, material: dict[str, Any]) -> None:
+        self._mark_opened(material)
+        self.app.start_from_material(material)
+
+    def _set_completed(self, material_id: int, completed: bool) -> None:
+        self.db.set_material_completed(material_id, completed)
+        self.app.toast("Slide segnata come completata." if completed else "Slide riaperta.")
+        self.notify_change()
+
+    def _open_material(self, material: dict[str, Any]) -> None:
+        if self._open_file(str(material.get("file_path") or "")):
+            self._mark_opened(material)
+
+    def _open_file(self, file_path: str) -> bool:
         if not file_path:
             messagebox.showwarning(
                 "File non impostato",
                 "Nessun file associato a questo materiale.",
                 parent=self.winfo_toplevel(),
             )
-            return
+            return False
         path = Path(file_path)
         if not path.exists():
             messagebox.showerror(
@@ -388,11 +469,11 @@ class MaterialsSection(Card):
                 f"Il file non esiste piu' nel percorso indicato:\n{file_path}",
                 parent=self.winfo_toplevel(),
             )
-            return
+            return False
         if is_pdf(path):
             # I PDF si aprono nel visualizzatore integrato (slide divise una per volta).
             if open_pdf_window(self, self.app, path) is not None:
-                return
+                return True
         try:
             os.startfile(str(path))  # type: ignore[attr-defined]
         except (OSError, AttributeError) as exc:
@@ -401,6 +482,8 @@ class MaterialsSection(Card):
                 str(exc),
                 parent=self.winfo_toplevel(),
             )
+            return False
+        return True
 
     def _add_hours(self, material_id: int) -> None:
         value = simpledialog.askfloat(
@@ -452,7 +535,7 @@ class MaterialDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.transient(section.winfo_toplevel())
         set_window_icon(self, self.app.paths["icon"])
-        center_window(self, 640, 680)
+        center_window(self, 640, 720)
         self.grid_columnconfigure(0, weight=1)
         self._build()
         self.grab_set()
@@ -484,7 +567,9 @@ class MaterialDialog(ctk.CTkToplevel):
         self.target_var = ctk.StringVar(value="0")
         self.file_var = ctk.StringVar()
         self.subject_var = ctk.StringVar(value=self.fixed_subject)
-        self._field(form, 0, "Titolo", self.title_var, "es. Dispense Capitolo 3")
+        self._files: list[str] = []  # piu' file scelti insieme (solo per un nuovo materiale)
+        self._files_label = ""
+        self.title_entry = self._field(form, 0, "Titolo", self.title_var, "es. Dispense Capitolo 3")
 
         if self.allow_subject_change:
             self._field(
@@ -532,7 +617,7 @@ class MaterialDialog(ctk.CTkToplevel):
             text_color=COLORS.text_muted,
             anchor="w",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 5))
-        ctk.CTkEntry(
+        self.file_entry = ctk.CTkEntry(
             file_frame,
             textvariable=self.file_var,
             height=38,
@@ -541,7 +626,19 @@ class MaterialDialog(ctk.CTkToplevel):
             text_color=COLORS.text,
             font=font(12),
             corner_radius=9,
-        ).grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        )
+        self.file_entry.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        if not self.material:
+            ctk.CTkLabel(
+                file_frame,
+                text="Con «Sfoglia» puoi selezionare piu' file insieme (Ctrl/Maiusc): "
+                "si crea un materiale per ognuno, con il titolo preso dal nome del file.",
+                font=font(9),
+                text_color=COLORS.text_faint,
+                anchor="w",
+                wraplength=560,
+                justify="left",
+            ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ctk.CTkButton(
             file_frame,
             text="Sfoglia",
@@ -779,19 +876,71 @@ class MaterialDialog(ctk.CTkToplevel):
         self.event_combo.set(selected)
 
     def _browse(self) -> None:
-        path = filedialog.askopenfilename(
-            parent=self,
-            title="Seleziona materiale",
-            filetypes=[
-                ("Documenti", "*.pdf *.doc *.docx *.txt *.md *.ppt *.pptx *.xlsx"),
-                ("PDF", "*.pdf"),
-                ("Tutti i file", "*.*"),
-            ],
-        )
-        if path:
-            self.file_var.set(path)
+        filetypes = [
+            ("Documenti", "*.pdf *.doc *.docx *.txt *.md *.ppt *.pptx *.xlsx"),
+            ("PDF", "*.pdf"),
+            ("Tutti i file", "*.*"),
+        ]
+        if self.material:
+            path = filedialog.askopenfilename(parent=self, title="Seleziona materiale", filetypes=filetypes)
+            paths = [path] if path else []
+        else:
+            paths = list(filedialog.askopenfilenames(
+                parent=self, title="Seleziona uno o piu' materiali", filetypes=filetypes
+            ) or [])
+        if not paths:
+            return
+        if len(paths) == 1:
+            self._set_files([])
+            self.file_var.set(paths[0])
             if not self.title_var.get().strip():
-                self.title_var.set(Path(path).stem)
+                self.title_var.set(Path(paths[0]).stem)
+            return
+        self._set_files(paths)
+
+    def _set_files(self, paths: list[str]) -> None:
+        """Piu' file: il titolo di ognuno e' il nome del file, campi bloccati."""
+        self._files = list(paths)
+        if self._files:
+            names = ", ".join(Path(path).name for path in self._files[:3])
+            more = f" e altri {len(self._files) - 3}" if len(self._files) > 3 else ""
+            self._files_label = f"{len(self._files)} file: {names}{more}"
+            self.file_var.set(self._files_label)
+            self.title_var.set("(dal nome di ogni file)")
+            self.title_entry.configure(state="disabled")
+            self.file_entry.configure(state="disabled")
+        else:
+            self._files_label = ""
+            if self.title_var.get() == "(dal nome di ogni file)":
+                self.title_var.set("")
+            self.title_entry.configure(state="normal")
+            self.file_entry.configure(state="normal")
+
+    def _save_many(self, subject: str, target: float, event_id: int | None, year: str) -> None:
+        saved, errors = 0, []
+        self.app.subject_folder(subject)
+        for path in self._files:
+            try:
+                file_path = path
+                if Path(path).is_file():
+                    file_path = str(self.app.subject_folders.copy_material(path, subject))
+                if self.db.find_material_by_path(file_path) is not None:
+                    errors.append(f"{Path(path).name}: gia' presente, saltato.")
+                    continue
+                self.db.add_material(Path(path).stem, file_path, subject, target, event_id, academic_year=year)
+                saved += 1
+            except Exception as exc:
+                self.app.logger.exception("Salvataggio materiale non riuscito.")
+                errors.append(f"{Path(path).name}: {exc}")
+        if errors:
+            messagebox.showwarning("Alcuni file non aggiunti", "\n".join(errors[:10]), parent=self)
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+        self.app.toast(f"Aggiunti {saved} materiali.")
+        self.section.notify_change()
 
     def _save(self) -> None:
         title = self.title_var.get().strip()
@@ -802,6 +951,9 @@ class MaterialDialog(ctk.CTkToplevel):
             else self.fixed_subject.strip()
         )
         target = safe_float(self.target_var.get(), -1)
+        many = bool(self._files) and self.file_var.get() == self._files_label
+        if many:
+            title, file_path = "-", self._files[0]
         if not title:
             messagebox.showerror(
                 "Titolo mancante",
@@ -823,7 +975,7 @@ class MaterialDialog(ctk.CTkToplevel):
                 parent=self,
             )
             return
-        if not Path(file_path).exists():
+        if not many and not Path(file_path).exists():
             if not messagebox.askyesno(
                 "File non trovato",
                 "Il file indicato non esiste. Salvarlo comunque?",
@@ -851,6 +1003,9 @@ class MaterialDialog(ctk.CTkToplevel):
             event_id = self._event_ids[self._event_labels.index(label)]
         except (ValueError, IndexError):
             event_id = None
+        if many:
+            self._save_many(subject, target, event_id, year)
+            return
         try:
             self.app.subject_folder(subject)
             unchanged = bool(self.material) and _same_file(file_path, str(self.material.get("file_path") or ""))

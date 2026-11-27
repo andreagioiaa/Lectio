@@ -166,6 +166,36 @@ def slide_materials(materials: Iterable[dict[str, Any]], academic_year: str = ""
     return sorted(rows, key=lambda row: (natural_key(Path(str(row["file_path"])).name), int(row.get("id") or 0)))
 
 
+# Stato di studio di una slide (colore del titolo nella pagina materia).
+STATUS_TODO = "todo"            # mai aperta: rosso
+STATUS_IN_PROGRESS = "progress"  # aperta / studiata / con appunti: arancione
+STATUS_DONE = "done"            # completata dall'utente o nel riassunto del corso: verde
+
+
+def material_status(
+    material: dict[str, Any],
+    summary_paths: set[str] | frozenset[str] = frozenset(),
+    notes_paths: set[str] | frozenset[str] = frozenset(),
+) -> str:
+    """Stato della slide: ``done`` se completata o presente nel riassunto del corso,
+    ``progress`` se aperta, con ore registrate o con appunti, altrimenti ``todo``.
+
+    ``summary_paths`` / ``notes_paths`` sono percorsi PDF normalizzati
+    (``Database.summary_pdf_paths`` / ``Database.note_block_pdf_paths``).
+    """
+    path = str(material.get("file_path") or "").strip()
+    key = _path_key(path) if path else ""
+    if str(material.get("completed_at") or "").strip() or (key and key in summary_paths):
+        return STATUS_DONE
+    try:
+        logged = float(material.get("logged_hours") or 0)
+    except (TypeError, ValueError):
+        logged = 0.0
+    if str(material.get("opened_at") or "").strip() or logged > 0 or (key and key in notes_paths):
+        return STATUS_IN_PROGRESS
+    return STATUS_TODO
+
+
 def block_sources_by_pdf(blocks: Iterable[dict[str, Any]], resolve: Callable[[str], str] = lambda p: p) -> dict[str, dict[str, Any]]:
     """``{percorso PDF normalizzato: capitolo di appunti piu' recente}``."""
     found: dict[str, dict[str, Any]] = {}

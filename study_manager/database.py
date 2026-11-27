@@ -29,7 +29,7 @@ from .utils import (
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Colonne con percorsi di file salvati in forma relativa quando possibile.
 _STORED_PATH_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -73,6 +73,11 @@ GOOGLE_LINKED_SOURCES: tuple[str, ...] = (
 )
 
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+def _norm_path(path: Any) -> str:
+    """Percorso confrontabile (assoluto, maiuscole/minuscole come il sistema)."""
+    return os.path.normcase(os.path.abspath(str(path or "")))
 
 
 def normalize_hex(value: Any) -> str | None:
@@ -190,6 +195,8 @@ CREATE TABLE IF NOT EXISTS materials (
     calendar_event_id INTEGER,
     created_at TEXT NOT NULL,
     academic_year TEXT NOT NULL DEFAULT '',
+    opened_at TEXT NOT NULL DEFAULT '',
+    completed_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (calendar_event_id) REFERENCES calendar_events(id) ON DELETE SET NULL
 );
 
@@ -545,6 +552,12 @@ class Database:
             connection.execute(
                 "ALTER TABLE materials ADD COLUMN academic_year TEXT NOT NULL DEFAULT ''"
             )
+        for column in ("opened_at", "completed_at"):
+            # Schema v12: stato di studio della slide (aperta / completata dall'utente).
+            if columns and column not in columns:
+                connection.execute(
+                    f"ALTER TABLE materials ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                )
         columns = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(calendar_events)").fetchall()
@@ -891,6 +904,44 @@ class Database:
                 )
                 changed += 1
         return changed
+
+    def mark_material_opened(self, material_id: int) -> None:
+        """Segna il materiale come aperto almeno una volta (slide «in corso»)."""
+        self._connection().execute(
+            "UPDATE materials SET opened_at = ? WHERE id = ? AND TRIM(opened_at) = ''",
+            (now_str(), int(material_id)),
+        )
+
+    def mark_material_opened_by_path(self, file_path: str | Path) -> None:
+        found = self.find_material_by_path(str(file_path or ""))
+        if found is not None:
+            self.mark_material_opened(int(found["id"]))
+
+    def set_material_completed(self, material_id: int, completed: bool = True) -> None:
+        """Segna (o toglie) la slide come completata dall'utente."""
+        self._connection().execute(
+            "UPDATE materials SET completed_at = ? WHERE id = ?",
+            (now_str() if completed else "", int(material_id)),
+        )
+
+    def summary_pdf_paths(self, subject: str) -> set[str]:
+        """PDF (percorsi normalizzati) i cui appunti sono capitoli del riassunto del corso."""
+        rows = self._connection().execute(
+            "SELECT DISTINCT b.pdf_path FROM summary_chapters c "
+            "JOIN note_blocks b ON b.id = c.note_block_id "
+            "WHERE LOWER(TRIM(c.subject)) = LOWER(TRIM(?)) AND TRIM(b.pdf_path) <> ''",
+            (str(subject or ""),),
+        ).fetchall()
+        return {_norm_path(self._real_path(row["pdf_path"])) for row in rows}
+
+    def note_block_pdf_paths(self, subject: str) -> set[str]:
+        """PDF (percorsi normalizzati) con almeno un capitolo di appunti nella materia."""
+        rows = self._connection().execute(
+            "SELECT DISTINCT pdf_path FROM note_blocks "
+            "WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?)) AND TRIM(pdf_path) <> ''",
+            (str(subject or ""),),
+        ).fetchall()
+        return {_norm_path(self._real_path(row["pdf_path"])) for row in rows}
 
     def delete_material(self, material_id: int) -> None:
         self._connection().execute("DELETE FROM materials WHERE id = ?", (int(material_id),))

@@ -96,6 +96,23 @@ def review_text_to_questions(text: str) -> list[dict[str, Any]]:
     return out
 
 
+def split_pasted_questions(text: str) -> list[dict[str, Any]]:
+    """Piu' domande incollate insieme.
+
+    Con almeno una riga ``=== DOMANDA ===`` si divide come nella revisione dei temi;
+    altrimenti ogni blocco separato da una riga vuota e' una domanda.
+    """
+    clean = str(text or "").replace("\r\n", "\n")
+    if any(_SEPARATOR_RE.match(line) for line in clean.split("\n")):
+        return review_text_to_questions(clean)
+    out: list[dict[str, Any]] = []
+    for block in re.split(r"\n\s*\n", clean):
+        body = block.strip()
+        if body:
+            out.append({"number": len(out) + 1, "text": body})
+    return out
+
+
 _DATE_PATTERNS = (
     re.compile(r"(?<!\d)(\d{1,2})[/.\-](\d{1,2})[/.\-](20\d{2})(?!\d)"),
     re.compile(r"(?<!\d)(20\d{2})[\-_.](\d{1,2})[\-_.](\d{1,2})(?!\d)"),

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" alt="Lectio" width="160"></p>
+
 # Lectio - Gestionale Studio & Analytics Desktop
 
 Applicazione desktop Windows per organizzare lo studio con il metodo Pomodoro,
@@ -266,8 +268,11 @@ StudyApp/
 ├── version_info.txt            # metadati versione dell'exe
 ├── README.md
 ├── assets/
-│   ├── app.ico                 # icona Windows
-│   ├── app.png
+│   ├── app.ico                 # icona Windows (exe e finestre)
+│   ├── app.png                 # icona 256 px
+│   ├── logo.png                # logo completo 1024 px
+│   ├── logo_full_transparent.png # logo completo su sfondo trasparente
+│   ├── logo_mark.png           # libro su sfondo trasparente (barra in alto)
 │   └── katex/                  # KaTeX 0.16 locale (MIT) per l'anteprima HTML
 ├── study_manager/
 │   ├── __init__.py

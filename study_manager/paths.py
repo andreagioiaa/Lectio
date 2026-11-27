@@ -139,6 +139,7 @@ def ensure_data_layout() -> dict[str, Path]:
         "hosts_status": data / "hosts_guard_status.json",
         "hosts_backup": data / "hosts_original.backup",
         "icon": resource_path("assets/app.ico"),
+        "logo": resource_path("assets/logo_mark.png"),
     }
     return paths
 

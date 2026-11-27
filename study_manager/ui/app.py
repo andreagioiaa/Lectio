@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import queue
@@ -10,6 +11,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox
 from typing import Any, Callable
@@ -25,6 +27,8 @@ from ..services.blocker import BlockerController
 from ..services.calendar_sync import CalendarSyncService
 from ..services.pomodoro_service import PomodoroService
 from ..services.subject_folders import SubjectFolders
+from ..services import sync_folder as sync
+from ..services import updater
 from ..services.transcription import TranscriptionController, transcription_backend_info
 from ..services.youtube_audio import youtube_backend_info
 from ..utils import safe_float
@@ -50,6 +54,7 @@ from .theme import (
     sync_appearance,
 )
 from .theme_reveal import ThemeReveal
+from .update_dialog import UpdateDialog
 from .video_view import VideoView
 from .widgets import glyph_icon, render_state, set_window_icon
 
@@ -64,7 +69,9 @@ class LectioApp(ctk.CTk):
         install_text_shortcuts(self)
         self.paths = ensure_data_layout()
         self.logger = logging.getLogger("lectio.app")
-        self.db = Database(self.paths["db"])
+        self._heartbeat_job: str | None = None
+        self._check_sync_folder()
+        self.db = Database(self.paths["db"], journal_mode="DELETE" if self.paths["synced"] else "WAL")
         interrupted = self.db.recover_interrupted_video_jobs()
         if interrupted:
             self.logger.info(
@@ -75,6 +82,14 @@ class LectioApp(ctk.CTk):
         self.audio = AudioController(self.paths["sounds"])
         self.transcriptions = TranscriptionController(self.paths)
         self.subject_folders = SubjectFolders(self.paths["subjects"])
+        # I file dentro ``Materie`` e nella cartella dati si salvano con percorso relativo.
+        self.db.set_path_roots(subjects=self.paths["subjects"], data=self.paths["shared"])
+        try:
+            converted = self.db.relativize_stored_paths()
+            if converted:
+                self.logger.info("Convertiti %s percorsi in forma relativa.", converted)
+        except Exception:
+            self.logger.exception("Conversione dei percorsi in forma relativa non riuscita.")
         try:
             self.subject_folders.ensure_all(self.db.list_subject_tags())
         except Exception:
@@ -106,6 +121,9 @@ class LectioApp(ctk.CTk):
         self.views: dict[str, Any] = {}
         self._view_theme: dict[str, str] = {}  # tema con cui ogni vista e' dipinta
         self._hosts_warned = False
+        self._update_info: updater.UpdateInfo | None = None
+        self._update_dialog: UpdateDialog | None = None
+        self._update_checking = False
         # Tema salvato: la palette va scelta prima di creare i widget.
         try:
             saved_theme = self.db.get_setting("ui_theme", THEME_DARK)
@@ -130,6 +148,9 @@ class LectioApp(ctk.CTk):
         self._build_content()
         self._build_toast()
         self._setup_signals()
+        if self.paths["synced"]:
+            self._sync_heartbeat()
+            self.after(1500, self._warn_conflict_copies)
         if current_theme() == THEME_LIGHT:
             # i widget sono nati con la palette chiara: restano da convertire solo
             # i pochi colori scritti direttamente nelle viste
@@ -143,6 +164,8 @@ class LectioApp(ctk.CTk):
         self.after(1000, self._global_poll)
         # Sync automatica non bloccante all'avvio (se l'account e' collegato).
         self.after(2500, self._startup_google_sync)
+        # Aggiornamenti: un controllo a ogni avvio (vedi services/updater.py).
+        self.after(800, self._startup_update_check)
 
     # ------------------------------------------------------------------ chrome
     def _set_initial_geometry(self) -> None:
@@ -241,7 +264,20 @@ class LectioApp(ctk.CTk):
             corner_radius=20,
             command=self.toggle_theme,
         )
-        self.theme_button.grid(row=0, column=2, sticky="e", padx=(10, 14), pady=8)
+        self.theme_button.grid(row=0, column=3, sticky="e", padx=(4, 14), pady=8)
+        # Compare solo quando c'e' una versione nuova (``_show_update_button``).
+        self.update_button = ctk.CTkButton(
+            bar,
+            text="",
+            width=20,
+            height=32,
+            font=font(11, "bold"),
+            fg_color=COLORS.accent,
+            hover_color=COLORS.accent_hover,
+            text_color="#FFFFFF",
+            corner_radius=16,
+            command=self.open_update_dialog,
+        )
         self._update_theme_button()
         # linea sottile sotto la barra, come i separatori di X
         tk.Frame(bar, height=1, bg=COLORS.border, bd=0, highlightthickness=0).place(
@@ -278,6 +314,8 @@ class LectioApp(ctk.CTk):
             if available <= 1:
                 return
             fixed = self.topbar.grid_slaves(row=0, column=0)[0].winfo_reqwidth() + self.theme_button.winfo_reqwidth() + 58
+            if self.update_button.winfo_ismapped():
+                fixed += self.update_button.winfo_reqwidth() + 10
             for mode in ("full", "short", "icons"):
                 texts = self._nav_texts(mode)
                 for key, button in self._nav_buttons.items():
@@ -1065,6 +1103,17 @@ class LectioApp(ctk.CTk):
     def on_close(self) -> None:
         if self._closing:
             return
+        warnings = self._exit_warnings()
+        if warnings and not messagebox.askyesno(
+            "Uscire da Lectio?",
+            "\n\n".join(warnings) + "\n\nUscire comunque?",
+            parent=self,
+        ):
+            return
+        self._close_now()
+
+    def _exit_warnings(self) -> list[str]:
+        """Lavori in corso che la chiusura interromperebbe."""
         warnings: list[str] = []
         snapshot = self.pomodoro.snapshot()
         if snapshot["status"] in {"running", "paused"} and snapshot["phase"] == "work":
@@ -1080,11 +1129,11 @@ class LectioApp(ctk.CTk):
         pdf_view = self.views.get("pdf")
         if pdf_view is not None and pdf_view.is_busy():
             warnings.append("L'elaborazione PDF in corso verra' interrotta.")
-        if warnings and not messagebox.askyesno(
-            "Uscire da Lectio?",
-            "\n\n".join(warnings) + "\n\nUscire comunque?",
-            parent=self,
-        ):
+        return warnings
+
+    def _close_now(self) -> None:
+        """Chiude Lectio senza altre domande: ferma i servizi e ripristina hosts."""
+        if self._closing:
             return
         self._closing = True
         if self._poll_job is not None:
@@ -1103,6 +1152,258 @@ class LectioApp(ctk.CTk):
             self.destroy()
         except tk.TclError:
             pass
+
+    # ------------------------------------------------------------ aggiornamenti
+    def _startup_update_check(self) -> None:
+        """All'avvio: pulizia dell'aggiornamento precedente e controllo su GitHub."""
+        updater.cleanup_previous()
+        try:
+            previous = self.db.get_setting(updater.SETTING_LAST_RUN_VERSION, "")
+            if previous != APP_VERSION:
+                self.db.set_setting(updater.SETTING_LAST_RUN_VERSION, APP_VERSION)
+                old, new = updater.parse_version(previous), updater.parse_version(APP_VERSION)
+                if old is not None and new is not None and old < new:
+                    self.toast(f"Lectio aggiornato alla v{APP_VERSION}.")
+        except Exception:
+            self.logger.exception("Lettura della versione precedente non riuscita.")
+        if os.environ.get("LECTIO_NO_UPDATE_CHECK", "").strip():
+            return
+        # Un obbligo gia' noto vale anche senza connessione: si blocca subito.
+        try:
+            cached = updater.cached_update(self.db)
+        except Exception:
+            self.logger.exception("Lettura dell'ultimo controllo aggiornamenti non riuscita.")
+            cached = None
+        if cached is not None and cached.required:
+            self._apply_update_info(cached, manual=False)
+        self.check_for_updates(manual=False)
+
+    def check_for_updates(self, manual: bool = True) -> None:
+        """Scarica ``update.json`` in un thread; il risultato torna dalla coda ``post``."""
+        if self._update_checking:
+            if manual:
+                self.toast("Controllo degli aggiornamenti gia' in corso.")
+            return
+        self._update_checking = True
+
+        def worker() -> None:
+            manifest: dict[str, Any] | None = None
+            error = ""
+            try:
+                manifest = updater.fetch_manifest()
+            except updater.UpdateError as exc:
+                error = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Controllo aggiornamenti non riuscito.")
+                error = str(exc)
+            self.post(lambda: self._on_update_checked(manifest, error, manual))
+
+        threading.Thread(target=worker, name="Lectio-UpdateCheck", daemon=True).start()
+
+    def _on_update_checked(self, manifest: dict[str, Any] | None, error: str, manual: bool) -> None:
+        self._update_checking = False
+        if manifest is None:
+            self.logger.info("Controllo aggiornamenti non riuscito: %s", error)
+            if manual:
+                messagebox.showwarning("Aggiornamenti", f"Controllo non riuscito:\n{error}", parent=self)
+            return
+        try:
+            updater.remember_manifest(self.db, manifest)
+            known_min = self.db.get_setting(updater.SETTING_KNOWN_MIN, "")
+        except Exception:
+            self.logger.exception("Salvataggio del controllo aggiornamenti non riuscito.")
+            known_min = ""
+        info = updater.evaluate(manifest, APP_VERSION, known_min)
+        if info is None:
+            self._update_info = None
+            self.update_button.grid_remove()
+            self._schedule_nav_layout()
+            if manual:
+                messagebox.showinfo("Aggiornamenti", f"Lectio v{APP_VERSION} e' aggiornato.", parent=self)
+            return
+        self._apply_update_info(info, manual)
+
+    def _apply_update_info(self, info: updater.UpdateInfo, manual: bool) -> None:
+        if info.required and not updater.is_frozen():
+            # Avviato dai sorgenti (sviluppo): niente blocco, solo l'avviso.
+            info = dataclasses.replace(info, required=False)
+        already_shown = self._update_info is not None and self._update_info.latest == info.latest
+        self._update_info = info
+        self.update_button.configure(
+            text=f"Aggiorna a v{info.latest}",
+            fg_color=COLORS.red if info.required else COLORS.accent,
+        )
+        self.update_button.grid(row=0, column=2, sticky="e", padx=(10, 0), pady=8)
+        self._schedule_nav_layout()
+        skipped = self.db.get_setting(updater.SETTING_SKIPPED, "")
+        if info.required or manual or (not already_shown and skipped != info.latest):
+            self.open_update_dialog()
+
+    def open_update_dialog(self) -> None:
+        info = self._update_info
+        if info is None or self._closing:
+            return
+        existing = self._update_dialog
+        if existing is not None and existing.winfo_exists():
+            if existing.busy or existing.info == info:
+                existing.lift()
+                existing.focus_force()
+                return
+            existing.close()
+        self._update_dialog = UpdateDialog(
+            self,
+            info,
+            can_install=updater.can_self_update(),
+            on_update=self._start_update,
+            on_skip=self._skip_update,
+            on_quit=self.on_close,
+        )
+
+    def _skip_update(self, info: updater.UpdateInfo) -> None:
+        self.db.set_setting(updater.SETTING_SKIPPED, info.latest)
+        self.toast(f"La v{info.latest} non verra' piu' proposta all'avvio.")
+
+    def _start_update(self, dialog: UpdateDialog) -> None:
+        info = dialog.info
+        if not updater.can_self_update():
+            webbrowser.open(info.page)
+            return
+        warnings = self._exit_warnings()
+        if warnings and not messagebox.askyesno(
+            "Aggiornare ora?",
+            "Per installare l'aggiornamento Lectio si riavvia.\n\n" + "\n\n".join(warnings) + "\n\nContinuare?",
+            parent=dialog,
+        ):
+            return
+        dialog.set_busy(True, "Download in corso...")
+        exe = updater.current_exe()
+        last_report = [0.0]
+
+        def progress(received: int, total: int) -> None:
+            now = time.monotonic()
+            if now - last_report[0] < 0.25 and received < total:
+                return
+            last_report[0] = now
+            self.post(lambda: dialog.set_progress(received, total))
+
+        def worker() -> None:
+            new_exe: Path | None = None
+            error = ""
+            try:
+                new_exe = updater.download(info, exe, progress)
+            except updater.UpdateError as exc:
+                error = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Download dell'aggiornamento non riuscito.")
+                error = str(exc) or exc.__class__.__name__
+            self.post(lambda: self._install_update(dialog, info, new_exe, error))
+
+        threading.Thread(target=worker, name="Lectio-UpdateDownload", daemon=True).start()
+
+    def _install_update(
+        self, dialog: UpdateDialog, info: updater.UpdateInfo, new_exe: Path | None, error: str
+    ) -> None:
+        if new_exe is None:
+            dialog.set_busy(False)
+            dialog.set_status(f"Aggiornamento non riuscito: {error}", error=True)
+            return
+        dialog.set_status("Backup dei dati prima dell'aggiornamento...")
+        try:
+            dialog.update_idletasks()
+            target = self._backup_before_update(info)
+            self.logger.info("Backup prima dell'aggiornamento: %s", target)
+        except Exception as exc:
+            self.logger.exception("Backup prima dell'aggiornamento non riuscito.")
+            if not messagebox.askyesno(
+                "Backup non riuscito",
+                f"Il backup automatico dei dati non e' riuscito:\n{exc}\n\nAggiornare comunque?",
+                icon="warning",
+                parent=dialog,
+            ):
+                new_exe.unlink(missing_ok=True)
+                dialog.set_busy(False)
+                dialog.set_status("Aggiornamento annullato.")
+                return
+        try:
+            updater.launch_finisher(new_exe, updater.current_exe(), updater.processes_to_wait())
+        except OSError as exc:
+            self.logger.exception("Avvio del nuovo exe non riuscito.")
+            dialog.set_busy(False)
+            dialog.set_status(f"Avvio della nuova versione non riuscito: {exc}", error=True)
+            return
+        dialog.set_status("Riavvio di Lectio...")
+        dialog.busy = False
+        self._close_now()
+
+    def _backup_before_update(self, info: updater.UpdateInfo) -> Path:
+        from ..services.backup import export_backup
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = Path(self.paths["data"]) / "backups" / f"lectio-v{APP_VERSION}-prima-di-v{info.latest}-{stamp}.zip"
+        export_backup(self.db, self.paths, target)
+        return target
+
+    # ------------------------------------------------------------ sincronizzazione
+    def _check_sync_folder(self) -> None:
+        """All'avvio: cartella sincronizzata raggiungibile e non aperta su un altro PC."""
+        folder = self.paths.get("sync_folder")
+        if folder is None:
+            return
+        self.withdraw()
+        while not self.paths["synced"]:
+            if messagebox.askretrycancel(
+                "Cartella sincronizzata non raggiungibile",
+                f"La cartella dei dati sincronizzati non e' raggiungibile:\n{folder}\n\n"
+                "Controlla che OneDrive (o il programma di sincronizzazione) sia attivo e la cartella "
+                "scaricata, poi premi Riprova.",
+                icon="warning", parent=self,
+            ):
+                self.paths = ensure_data_layout()
+                continue
+            if messagebox.askyesno(
+                "Usare i dati di questo PC?",
+                "Aprire Lectio con i dati salvati solo su questo PC?\n\nLe modifiche fatte ora non "
+                "finiranno nella cartella sincronizzata. Al prossimo avvio Lectio la cerchera' di nuovo.",
+                parent=self,
+            ):
+                self.deiconify()
+                return
+            self.destroy()
+            raise SystemExit(0)
+        conflict = sync.lock_conflict(Path(folder))
+        if conflict is not None and not messagebox.askyesno(
+            "Lectio e' aperto su un altro PC",
+            f"Lectio risulta aperto su «{conflict.get('pc')}» (ultimo segnale alle "
+            f"{str(conflict.get('heartbeat'))[11:16]}).\n\nUsa Lectio su un PC alla volta: chiudilo li', "
+            "aspetta che la sincronizzazione finisca e riapri qui.\n\nAprire comunque? Le modifiche "
+            "fatte contemporaneamente sui due PC potrebbero andare perse.",
+            icon="warning", parent=self,
+        ):
+            self.destroy()
+            raise SystemExit(0)
+        self.deiconify()
+
+    def _sync_heartbeat(self) -> None:
+        """Aggiorna ``lectio.lock`` ogni minuto, cosi' gli altri PC sanno che Lectio e' aperto qui."""
+        try:
+            sync.write_lock(Path(self.paths["shared"]))
+        except OSError:
+            self.logger.warning("Aggiornamento di lectio.lock non riuscito.", exc_info=True)
+        if not self._closing:
+            self._heartbeat_job = self.after(sync.HEARTBEAT_SECONDS * 1000, self._sync_heartbeat)
+
+    def _warn_conflict_copies(self) -> None:
+        copies = sync.conflict_copies(Path(self.paths["shared"]))
+        if copies:
+            messagebox.showwarning(
+                "Copie in conflitto",
+                "Nella cartella sincronizzata ci sono copie del database create dal programma di "
+                "sincronizzazione (Lectio e' stato usato su due PC insieme):\n\n"
+                + "\n".join(f"• {path.name}" for path in copies[:5])
+                + "\n\nLectio usa study_manager.db. Le copie non vengono toccate: se ti servono dati "
+                "che mancano, chiedi aiuto prima di cancellarle.",
+                parent=self,
+            )
 
     def emergency_shutdown(self) -> None:
         if self._shutdown_done:
@@ -1151,10 +1452,25 @@ class LectioApp(ctk.CTk):
             self.transcriptions.shutdown()
         except Exception:
             self.logger.exception("Chiusura trascrizione non riuscita.")
+        if self.paths.get("synced"):
+            if self._heartbeat_job is not None:
+                try:
+                    self.after_cancel(self._heartbeat_job)
+                except (tk.TclError, ValueError):
+                    pass
+            try:
+                sync.write_snapshot(self.db, self.paths)
+            except Exception:
+                self.logger.exception("Snapshot di chiusura non riuscito.")
         try:
             self.db.close_all()
         except Exception:
             self.logger.exception("Chiusura database non riuscita.")
+        if self.paths.get("synced"):
+            try:
+                sync.release_lock(Path(self.paths["shared"]))
+            except OSError:
+                self.logger.warning("Rimozione di lectio.lock non riuscita.", exc_info=True)
 
 
 def run_app(debug: bool = False, smoke_test: bool = False) -> int:

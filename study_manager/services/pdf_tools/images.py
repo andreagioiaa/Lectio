@@ -14,11 +14,12 @@ import re
 import unicodedata
 from pathlib import Path
 
-from ...paths import app_data_dir
+from ...paths import shared_data_dir
 
 
 def images_root() -> Path:
-    return app_data_dir() / "pdf_images"
+    # Nella cartella condivisa (se sincronizzata): gli appunti si aprono con le immagini su ogni PC.
+    return shared_data_dir() / "pdf_images"
 
 
 def chapter_slug(stem: str) -> str:

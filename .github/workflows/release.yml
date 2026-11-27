@@ -1,40 +1,98 @@
 # Build di Lectio.exe su Windows e pubblicazione nelle Release di GitHub.
 #
-# - Pull request: compila e allega l'exe come artifact (verifica della build).
-# - Tag "v*" (es. v1.4.2): compila e pubblica la Release con Lectio.exe allegato.
-# - Avvio manuale (Actions → Build e Release → Run workflow) con "version" (es. v1.4.2):
-#   compila main e pubblica la Release creando il tag su quel commit.
-#   Il link https://github.com/andreagioiaa/Lectio/releases/latest/download/Lectio.exe
-#   punta sempre all'ultima versione.
+# La versione si scrive SOLO in study_manager/config.py (APP_VERSION e
+# MIN_SUPPORTED_VERSION). Da li' la CI ricava version_info.txt, il tag e
+# update.json, il file che Lectio legge all'avvio per sapere se c'e' una
+# versione nuova (vedi study_manager/services/updater.py e worktree_commit.md).
 #
-# Stessi passi di build.ps1, senza venv e senza prompt interattivi.
+# - Pull request: compila, esegue i test e dice se al merge partira' una release.
+# - Push su main: se il tag v<APP_VERSION> non esiste ancora, compila e pubblica
+#   la Release (Lectio.exe + update.json) creando il tag su quel commit.
+#   Se APP_VERSION non e' cambiata non si pubblica nulla.
+# - Push di un tag "v*": deve coincidere con APP_VERSION, poi pubblica.
+# - Avvio manuale (Actions -> Build e Release -> Run workflow) con "publish":
+#   pubblica APP_VERSION del ramo scelto, se il tag non esiste.
+#
+# Le release non vanno mai segnate come "pre-release": il link
+# releases/latest/download/update.json le ignorerebbe.
 name: Build e Release
 
 on:
   pull_request:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Versione da pubblicare, es. v1.4.2 (vuoto = solo build)'
+      publish:
+        description: 'Pubblica la release di APP_VERSION (se il tag non esiste)'
+        type: boolean
         required: false
-        default: ''
+        default: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: x64
           cache: pip
+
+      - name: Versione
+        id: ver
+        run: python tools/release.py info --github-output
+
+      - name: Decide se pubblicare
+        id: plan
+        shell: pwsh
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          $exists = [bool](git ls-remote --tags origin "refs/tags/$env:TAG")
+          $publish = $false
+          if ($env:EVENT -eq 'push' -and $env:REF_TYPE -eq 'tag') {
+            python tools/release.py check-tag $env:REF_NAME
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $publish = $true
+          }
+          elseif ($env:EVENT -eq 'push') {
+            $publish = -not $exists
+            if ($exists) { "Il tag $env:TAG esiste gia': nessuna nuova release." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY }
+          }
+          elseif ($env:EVENT -eq 'workflow_dispatch' -and $env:PUBLISH_INPUT -eq 'true') {
+            if ($exists) { throw "Il tag $env:TAG esiste gia': alza APP_VERSION in study_manager/config.py." }
+            $publish = $true
+          }
+          elseif ($env:EVENT -eq 'pull_request') {
+            if ($exists) {
+              "APP_VERSION invariata ($env:TAG gia' pubblicata): il merge non crea una release." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+            } elseif ($env:BASE_REF -eq 'main') {
+              "Al merge in main verra' pubblicata la release **$env:TAG**." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+            }
+          }
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "Versione $env:TAG - pubblicazione: $publish" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: version_info.txt da APP_VERSION
+        run: python tools/release.py version-info
 
       - name: Dipendenze
         run: |
@@ -53,24 +111,45 @@ jobs:
           $exe = "dist\Lectio.exe"
           if (-not (Test-Path $exe)) { throw "dist\Lectio.exe non trovato" }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-          "Lectio.exe: $mb MB" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          $fv = (Get-Item $exe).VersionInfo.FileVersion
+          "Lectio.exe: $mb MB, FileVersion $fv" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: update.json
+        run: python tools/release.py manifest --exe dist/Lectio.exe --out dist/update.json --notes-file RELEASE_NOTES.md
 
       - uses: actions/upload-artifact@v4
         with:
           name: Lectio-windows
-          path: dist/Lectio.exe
+          path: |
+            dist/Lectio.exe
+            dist/update.json
           retention-days: 7
 
+      - name: Note di rilascio
+        if: steps.plan.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          $notes = (Get-Content dist/update.json -Raw | ConvertFrom-Json).notes
+          $body = @"
+          $notes
+
+          ---
+          Per Windows 10/11 a 64 bit: scarica **Lectio.exe** e avvialo. Chi ha gia' Lectio lo ricevera' dall'aggiornamento automatico.
+          L'eseguibile non e' firmato: Windows SmartScreen puo' mostrare "Windows ha protetto il PC"; scegli "Ulteriori informazioni" -> "Esegui comunque".
+          "@
+          Set-Content -Path dist/release_body.md -Value $body -Encoding utf8
+
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
+        if: steps.plan.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Lectio.exe
-          tag_name: ${{ inputs.version || github.ref_name }}
+          files: |
+            dist/Lectio.exe
+            dist/update.json
+          tag_name: ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Lectio ${{ inputs.version || github.ref_name }}
+          name: Lectio ${{ steps.ver.outputs.tag }}
+          body_path: dist/release_body.md
           generate_release_notes: true
-          body: |
-            Installer per Windows 10/11 a 64 bit: scarica **Lectio.exe** e avvialo.
-            L'eseguibile non è firmato: Windows SmartScreen può mostrare "Windows ha protetto il PC";
-            scegli "Ulteriori informazioni" → "Esegui comunque".
+          prerelease: false
+          make_latest: 'true'

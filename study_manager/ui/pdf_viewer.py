@@ -650,6 +650,11 @@ def open_pdf_window(master, app, path: str | Path, page: int | None = None) -> P
             existing.viewer.show_page(page)
         return existing
     try:
+        # La slide aperta nel visualizzatore risulta «in corso» nella pagina materia.
+        app.db.mark_material_opened_by_path(target)
+    except Exception:
+        LOGGER.debug("Stato 'aperta' della slide non salvato.", exc_info=True)
+    try:
         return PdfViewerWindow(master.winfo_toplevel(), app, target, page)
     except Exception as exc:
         LOGGER.exception("Apertura del visualizzatore PDF non riuscita.")

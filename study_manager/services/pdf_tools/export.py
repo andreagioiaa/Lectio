@@ -1,10 +1,12 @@
-"""Esportazione del testo sorgente in .txt, .tex, .docx e anteprima HTML.
+"""Esportazione del testo sorgente in .txt, .md, .tex, .docx e anteprima HTML.
 
 Il sorgente puo' essere Markdown (formato predefinito dell'editor) oppure
 LaTeX, se l'utente ha scelto di modificare direttamente il codice LaTeX.
 
 - ``.txt``: testo pulito suddiviso per slide; le formule diventano leggibili
   (``\\alpha^{2}`` -> ``α²``) quando possibile.
+- ``.md``: Markdown comune (GitHub, Obsidian, contesto per un LLM); formule
+  ``$...$``/``$$...$$``, marcatori di slide come commenti ``<!-- Slide N -->``.
 - ``.tex``: solo corpo oppure documento completo compilabile (``article`` con
   ``amsmath``/``amssymb``). Le formule display usano ``\\[ ... \\]``, la forma
   raccomandata da amsmath (equivalente a ``$$ ... $$``).
@@ -71,7 +73,9 @@ class ExportError(RuntimeError):
 FORMAT_TXT = "txt"
 FORMAT_TEX = "tex"
 FORMAT_DOCX = "docx"
-EXPORT_FORMATS = (FORMAT_TXT, FORMAT_TEX, FORMAT_DOCX)
+FORMAT_MD = "md"
+EXPORT_FORMATS = (FORMAT_TXT, FORMAT_MD, FORMAT_TEX, FORMAT_DOCX)
+TEXT_FORMATS = (FORMAT_TXT, FORMAT_MD, FORMAT_TEX)
 
 SOURCE_MARKDOWN = "markdown"
 SOURCE_LATEX = "latex"
@@ -505,6 +509,8 @@ def wrap_latex_document(body: str, options: RenderOptions) -> str:
     parts.append("\\begin{document}\n")
     if options.title:
         parts.append("\\maketitle\n")
+    if options.table_of_contents:
+        parts.append("\\tableofcontents\n\\clearpage\n")
     parts.append("\n" + body.strip() + "\n\n\\end{document}\n")
     return "".join(parts)
 
@@ -781,6 +787,127 @@ def markdown_to_txt(markdown: str, options: RenderOptions) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Markdown standard (.md)
+# ---------------------------------------------------------------------------
+# Il sorgente dell'editor e' gia' Markdown, ma con alcune estensioni di Lectio
+# (``=== SLIDE N ===``, ``//``, ``\underline{}``, ``\textcolor{}``, elenchi ``a)``).
+# Il .md esportato usa solo Markdown comune (GitHub/Obsidian/LLM):
+#
+# - marcatori di slide -> commento HTML ``<!-- Slide N -->`` (invisibile ma tracciabile);
+# - sottolineato -> ``<u>``, monospazio -> backtick, colore -> solo il testo;
+# - a capo ``//`` -> ``\`` a fine riga;
+# - elenchi con lettere -> punto elenco con l'etichetta ``a)``;
+# - immagini copiate in ``img/`` accanto al file.
+MD_LIST_INDENT = "    "
+MD_IMAGE_DIR = "img"
+
+
+def _nodes_to_md(nodes: list[Node], indent: str) -> str:
+    out: list[str] = []
+    for node in nodes:
+        if isinstance(node, str):
+            out.append(node)
+        elif isinstance(node, Math):
+            if node.content.strip():
+                out.append(f"${node.content.strip()}$")
+        elif isinstance(node, LineBreak):
+            out.append("\\\n" + indent)
+        elif node.style == STYLE_BOLD:
+            out.append(f"**{_nodes_to_md(node.children, indent)}**")
+        elif node.style == STYLE_ITALIC:
+            out.append(f"*{_nodes_to_md(node.children, indent)}*")
+        elif node.style == STYLE_UNDERLINE:
+            out.append(f"<u>{_nodes_to_md(node.children, indent)}</u>")
+        elif node.style == STYLE_MONO:
+            code = plain_text(node.children)
+            fence = "``" if "`" in code else "`"
+            pad = " " if code.startswith("`") or code.endswith("`") else ""
+            out.append(f"{fence}{pad}{code}{pad}{fence}")
+        else:  # colore: non esiste in Markdown comune, resta il testo
+            out.append(_nodes_to_md(node.children, indent))
+    return "".join(out)
+
+
+def _md_inline(text: str, indent: str = "") -> str:
+    return re.sub(r"[ ]{2,}", " ", _nodes_to_md(parse_inline(text), indent)).strip()
+
+
+def md_image_ref(ref: str) -> str:
+    """Riferimento dell'immagine nel .md esportato (``img/<sottocartella>/<file>``)."""
+    if Path(ref).is_absolute() or ".." in Path(ref).parts:
+        return ref
+    return f"{MD_IMAGE_DIR}/{Path(ref).as_posix()}"
+
+
+def slides_to_md(slides: list[Slide], options: RenderOptions) -> str:
+    chunks: list[str] = []
+    for slide in slides:
+        lines: list[str] = []
+        if show_marker(slide, options):
+            lines.extend([f"<!-- Slide {slide.number} -->", ""])
+        previous_list = False
+        for block in slide.blocks:
+            if not block.text.strip():
+                continue
+            is_list = block.kind in LIST_KINDS
+            if block.kind == BLOCK_HEADING and not options.include_headings:
+                continue
+            if lines and lines[-1] != "" and not (is_list and previous_list):
+                lines.append("")
+            level = max(0, min(3, int(block.level or 0)))
+            pad = MD_LIST_INDENT * level
+            if block.kind == BLOCK_HEADING:
+                lines.append(f"{'#' * max(1, min(6, block.level or 1))} {_md_inline(block.text)}")
+            elif block.kind == BLOCK_BULLET:
+                lines.append(f"{pad}- {_md_inline(block.text, pad + '  ')}")
+            elif block.kind == BLOCK_NUMBER:
+                prefix = f"{block.number if block.number is not None else 1}. "
+                lines.append(f"{pad}{prefix}{_md_inline(block.text, pad + ' ' * len(prefix))}")
+            elif block.kind == BLOCK_LETTER:
+                lines.append(f"{pad}- {letter_label(block.number)}) {_md_inline(block.text, pad + '  ')}")
+            elif block.kind == BLOCK_CODE:
+                fence = code_fence(block.text)
+                lines.extend([f"{fence}{block.language}", block.text.rstrip("\n"), fence])
+            elif block.kind == BLOCK_MATH:
+                lines.extend(["$$", block.text.strip(), "$$"])
+            elif block.kind == BLOCK_TABLE:
+                lines.extend(line.strip() for line in block.text.strip().splitlines())
+            elif block.kind == BLOCK_IMAGE:
+                ref = block.text.strip()
+                lines.append(f"![{Path(ref).stem}]({md_image_ref(ref)})")
+            else:
+                lines.append(_md_inline(block.text))
+            previous_list = is_list
+        while lines and lines[-1] == "":
+            lines.pop()
+        if lines:
+            chunks.append("\n".join(lines))
+    return "\n\n".join(chunks).strip() + "\n"
+
+
+def markdown_to_md(markdown: str, options: RenderOptions) -> str:
+    return slides_to_md(parse_markdown(markdown), options)
+
+
+def copy_md_images(markdown: str, target_dir: Path) -> int:
+    """Copia in ``img/`` accanto al .md le immagini a cui il file fa riferimento."""
+    copied = 0
+    prefix = f"{MD_IMAGE_DIR}/"
+    for ref in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", markdown):
+        if not ref.startswith(prefix):
+            continue
+        original = ref[len(prefix):]
+        source = resolve_image(original)
+        if source is None:
+            continue
+        destination = target_dir / MD_IMAGE_DIR / original
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        copied += 1
+    return copied
+
+
+# ---------------------------------------------------------------------------
 # Pandoc / Word
 # ---------------------------------------------------------------------------
 def _pandoc_escape(text: str) -> str:
@@ -886,8 +1013,11 @@ def find_pandoc() -> str | None:
         import pypandoc  # type: ignore[import-not-found]
 
         bundled = pypandoc.get_pandoc_path()
-        if bundled and Path(bundled).is_file():
-            return str(bundled)
+        # pypandoc-binary 1.17 restituisce ".../files/pandoc" senza estensione.
+        for candidate in (Path(str(bundled)), Path(str(bundled) + ".exe"),
+                          Path(pypandoc.__file__).parent / "files" / exe):
+            if bundled and candidate.is_file():
+                return str(candidate)
     except Exception:
         pass
     return shutil.which("pandoc")
@@ -941,6 +1071,8 @@ def export_docx(source: str, source_format: str, target: str | Path, options: Re
         args = [command, "-f", reader, "-t", "docx", "-o", str(temp_output), str(input_path)]
         if options.title:
             args[1:1] = ["-M", f"title={options.title}"]
+        if options.table_of_contents:
+            args[1:1] = ["--toc", "-M", "toc-title=Indice"]
         args[1:1] = ["-M", "lang=it-IT", "--resource-path", str(images_root())]
         reference = reference_docx()
         if reference is not None:
@@ -967,16 +1099,103 @@ def export_docx(source: str, source_format: str, target: str | Path, options: Re
 
 
 # ---------------------------------------------------------------------------
+# PDF tramite una distribuzione LaTeX locale (MiKTeX / TeX Live)
+# ---------------------------------------------------------------------------
+LATEX_ENGINES = ("pdflatex", "xelatex", "lualatex")
+LATEX_MISSING_MESSAGE = (
+    "Per creare il PDF serve una distribuzione LaTeX installata (MiKTeX o TeX Live).\n\n"
+    "Installa MiKTeX (winget install MiKTeX.MiKTeX) e riprova, oppure esporta in .docx "
+    "e salva come PDF da Word."
+)
+
+
+def _latex_candidates() -> list[Path]:
+    roots: list[Path] = []
+    local = os.environ.get("LOCALAPPDATA", "")
+    if local:
+        roots.append(Path(local) / "Programs" / "MiKTeX" / "miktex" / "bin" / "x64")
+    for env in ("ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(env, "")
+        if base:
+            roots.append(Path(base) / "MiKTeX" / "miktex" / "bin" / "x64")
+            roots.append(Path(base) / "MiKTeX" / "miktex" / "bin")
+    texlive = Path("C:/texlive")
+    if texlive.is_dir():
+        for year in sorted(texlive.iterdir(), reverse=True):
+            roots.extend([year / "bin" / "windows", year / "bin" / "win64", year / "bin" / "win32"])
+    found: list[Path] = []
+    for engine in LATEX_ENGINES:
+        exe = f"{engine}.exe" if os.name == "nt" else engine
+        for root in roots:
+            if (root / exe).is_file():
+                found.append(root / exe)
+    return found
+
+
+def find_latex_engine() -> str | None:
+    """Percorso di pdflatex/xelatex/lualatex, se installato."""
+    for engine in LATEX_ENGINES:
+        command = shutil.which(engine)
+        if command:
+            return command
+    candidates = _latex_candidates()
+    return str(candidates[0]) if candidates else None
+
+
+def _latex_error(log: str) -> str:
+    """Prima riga d'errore del log di LaTeX (``! ...`` o ``file:riga: ...``)."""
+    lines = [line.strip() for line in str(log or "").splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith("!") or re.match(r"^[^:]+\.tex:\d+:", line):
+            return line[:300]
+    return lines[-1][:300] if lines else "errore sconosciuto"
+
+
+def compile_latex_pdf(latex: str, target: str | Path, engine: str | None = None, runs: int = 2) -> Path:
+    """Compila un documento LaTeX completo in PDF (due passaggi per l'indice)."""
+    command = engine or find_latex_engine()
+    if not command:
+        raise ExportError(LATEX_MISSING_MESSAGE)
+    target_path = Path(target)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="lectio-pdf-") as temp:
+        folder = Path(temp)
+        (folder / "documento.tex").write_text(latex, encoding="utf-8")
+        copy_latex_images(latex, folder)
+        args = [command, "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", "documento.tex"]
+        for _ in range(max(1, runs)):
+            try:
+                result = subprocess.run(
+                    args, cwd=str(folder), capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=300,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ExportError("LaTeX non ha terminato la compilazione entro 5 minuti.") from exc
+            except OSError as exc:
+                raise ExportError(f"Impossibile avviare LaTeX: {exc}") from exc
+            if result.returncode != 0:
+                raise ExportError(f"Compilazione LaTeX non riuscita: {_latex_error(result.stdout or result.stderr)}")
+        output = folder / "documento.pdf"
+        if not output.is_file():
+            raise ExportError("LaTeX non ha prodotto il file PDF.")
+        shutil.copyfile(output, target_path)
+    return target_path
+
+
+# ---------------------------------------------------------------------------
 # Esportazione generica
 # ---------------------------------------------------------------------------
 def render_source(source: str, source_format: str, fmt: str, options: RenderOptions) -> str:
-    """Testo finale di un formato testuale (txt/tex) a partire dal sorgente."""
+    """Testo finale di un formato testuale (txt/md/tex) a partire dal sorgente."""
     if source_format == SOURCE_LATEX:
         if fmt == FORMAT_TEX:
             return finalize_latex(source.strip() + "\n", options)
-        return markdown_to_txt(latex_to_markdown(source, options), options)
-    if fmt == FORMAT_TEX:
+        source = latex_to_markdown(source, options)
+    elif fmt == FORMAT_TEX:
         return markdown_to_latex(source, options)
+    if fmt == FORMAT_MD:
+        return markdown_to_md(source, options)
     return markdown_to_txt(source, options)
 
 
@@ -984,12 +1203,14 @@ def export_file(source: str, source_format: str, fmt: str, target: str | Path, o
     target_path = Path(target)
     if fmt == FORMAT_DOCX:
         return export_docx(source, source_format, target_path, options)
-    if fmt not in (FORMAT_TXT, FORMAT_TEX):
+    if fmt not in TEXT_FORMATS:
         raise ExportError(f"Formato non supportato: {fmt}")
     text = render_source(source, source_format, fmt, options)
     atomic_write_text(target_path, text)
     if fmt == FORMAT_TEX:
         copy_latex_images(text, target_path.parent)
+    elif fmt == FORMAT_MD:
+        copy_md_images(text, target_path.parent)
     return target_path
 
 

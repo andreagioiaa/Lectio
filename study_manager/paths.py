@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -114,25 +115,105 @@ def subjects_dir(data: Path) -> Path:
     return fallback
 
 
+# ---------------------------------------------------------------------------
+# Cartella sincronizzata (OneDrive, Google Drive, Dropbox...)
+# ---------------------------------------------------------------------------
+# Il percorso scelto si salva in un file *locale* (``sync.json`` nella cartella
+# dati di questo PC): ogni PC sa dove trovare i dati condivisi. Nella cartella
+# condivisa vanno database, ``Materie``, trascrizioni e immagini degli appunti;
+# log, modelli di trascrizione, suoni e strumenti (Pandoc, Tesseract) restano
+# locali. ``lectio-sync.json`` segna una cartella preparata da Lectio: se manca
+# (es. OneDrive non ancora collegato) la cartella non viene usata, cosi' Lectio
+# non crea per sbaglio un database vuoto al posto di quello sincronizzato.
+SYNC_CONFIG_NAME = "sync.json"
+SYNC_MARKER_NAME = "lectio-sync.json"
+DB_FILENAME = "study_manager.db"
+
+
+def sync_config_path() -> Path:
+    return app_data_dir() / SYNC_CONFIG_NAME
+
+
+def sync_folder() -> Path | None:
+    """Cartella sincronizzata scelta su questo PC, se c'e'."""
+    import json
+
+    try:
+        raw = json.loads(sync_config_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    folder = str(raw.get("folder") or "").strip() if isinstance(raw, dict) else ""
+    return Path(folder) if folder else None
+
+
+def set_sync_folder(folder: str | Path | None) -> None:
+    """Salva (o toglie, con ``None``) la cartella sincronizzata di questo PC."""
+    import json
+
+    path = sync_config_path()
+    if folder is None:
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(json.dumps({"folder": str(Path(folder))}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def sync_folder_ready(folder: Path | None) -> bool:
+    return folder is not None and (folder / SYNC_MARKER_NAME).is_file()
+
+
+def shared_data_dir() -> Path:
+    """Cartella dei dati condivisi: quella sincronizzata se pronta, altrimenti quella locale."""
+    folder = sync_folder()
+    return folder if sync_folder_ready(folder) else app_data_dir()
+
+
+def local_shared_paths(data: Path) -> dict[str, Path]:
+    """Database, Materie, trascrizioni e immagini quando i dati sono solo su questo PC."""
+    return {
+        "db": data / DB_FILENAME,
+        "subjects": subjects_dir(data),
+        "transcripts": data / "transcripts",
+        "pdf_images": data / "pdf_images",
+    }
+
+
+def synced_shared_paths(folder: Path) -> dict[str, Path]:
+    return {
+        "db": folder / DB_FILENAME,
+        "subjects": folder / "Materie",
+        "transcripts": folder / "transcripts",
+        "pdf_images": folder / "pdf_images",
+    }
+
+
 def ensure_data_layout() -> dict[str, Path]:
     """Crea e restituisce tutti i percorsi usati dall'applicazione."""
     data = app_data_dir()
     logs = data / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     sounds = sounds_dir(data)
-    transcripts = data / "transcripts"
-    transcripts.mkdir(parents=True, exist_ok=True)
     models = data / "models"
     models.mkdir(parents=True, exist_ok=True)
-    subjects = subjects_dir(data)
+    folder = sync_folder()
+    synced = sync_folder_ready(folder)
+    shared = synced_shared_paths(folder) if synced and folder is not None else local_shared_paths(data)
+    shared["transcripts"].mkdir(parents=True, exist_ok=True)
+    shared["subjects"].mkdir(parents=True, exist_ok=True)
+    transcripts = shared["transcripts"]
+    subjects = shared["subjects"]
     paths = {
         "data": data,
+        "shared": folder if synced and folder is not None else data,
+        "synced": synced,  # type: ignore[dict-item]
+        "sync_folder": folder,  # type: ignore[dict-item]  # scelta su questo PC (anche se non raggiungibile)
+        "pdf_images": shared["pdf_images"],
+        "snapshots": (folder / "Snapshot") if synced and folder is not None else data / "backups",
         "logs": logs,
         "sounds": sounds,
         "transcripts": transcripts,
         "models": models,
         "subjects": subjects,
-        "db": data / "study_manager.db",
+        "db": shared["db"],
         "log": logs / "lectio.log",
         "guard_log": logs / "hosts_guard.log",
         "hosts_control": data / "hosts_guard_control.json",
@@ -150,3 +231,61 @@ def is_frozen() -> bool:
 
 def executable_path() -> Path:
     return Path(sys.executable).resolve()
+
+
+# ---------------------------------------------------------------------------
+# Percorsi salvati nel database
+# ---------------------------------------------------------------------------
+# I file che stanno dentro una cartella gestita da Lectio (``Materie`` o la
+# cartella dati) vengono salvati come ``<materie>/Analisi/Slide/lezione.pdf``:
+# cosi' il database resta valido se la cartella viene spostata, sincronizzata
+# su un altro PC o condivisa. ``<`` e ``>`` non sono ammessi nei nomi di file
+# di Windows, quindi un percorso relativo non si confonde mai con uno reale.
+# I file fuori da queste cartelle restano con il percorso assoluto.
+PATH_ROOT_SUBJECTS = "materie"
+PATH_ROOT_DATA = "dati"
+_STORED_ROOT_RE = re.compile(r"^<([a-z]+)>(?:[\\/](.*))?$")
+
+
+class StoredPaths:
+    """Converte i percorsi tra la forma salvata (relativa) e quella reale (assoluta)."""
+
+    def __init__(self, roots: dict[str, str | Path] | None = None):
+        self.roots: dict[str, Path] = {}
+        for name, folder in (roots or {}).items():
+            if folder:
+                self.roots[name] = Path(os.path.abspath(str(folder)))
+
+    def _ordered(self) -> list[tuple[str, Path]]:
+        # la radice piu' lunga vince: ``Materie`` puo' stare dentro la cartella dati
+        return sorted(self.roots.items(), key=lambda item: len(str(item[1])), reverse=True)
+
+    def to_stored(self, path: str | Path | None) -> str:
+        value = str(path or "").strip()
+        if not value or not self.roots or _STORED_ROOT_RE.match(value):
+            return value
+        absolute = os.path.abspath(value)
+        normalized = os.path.normcase(absolute)
+        for name, root in self._ordered():
+            prefix = os.path.normcase(str(root)).rstrip("\\/")
+            if normalized == prefix:
+                return f"<{name}>"
+            if normalized.startswith(prefix + os.sep):
+                relative = absolute[len(prefix):].lstrip("\\/").replace("\\", "/")
+                return f"<{name}>/{relative}"
+        return value
+
+    def to_real(self, value: str | Path | None) -> str:
+        text = str(value or "").strip()
+        match = _STORED_ROOT_RE.match(text)
+        if not match:
+            return text
+        root = self.roots.get(match.group(1))
+        if root is None:
+            return text
+        relative = match.group(2) or ""
+        return str(root / Path(relative)) if relative else str(root)
+
+    @staticmethod
+    def is_stored_relative(value: str | Path | None) -> bool:
+        return bool(_STORED_ROOT_RE.match(str(value or "").strip()))

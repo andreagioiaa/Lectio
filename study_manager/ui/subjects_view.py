@@ -24,6 +24,9 @@ from ..utils import format_hours
 from ..services.subject_folders import KIND_NOTES
 from .materials import ORPHAN_SUBJECT, ORPHAN_SUBJECT_KEY, MaterialsSection
 from .subject_content import FlashcardsSection, NoteBlocksSection, VideosSection
+from .exam_view import ExamSection
+from .share_view import ExportSubjectDialog, import_subject_flow
+from .summary_view import SummarySection
 from .theme import font, register_color_dict
 from .widgets import (
     Card,
@@ -82,7 +85,21 @@ class SubjectsView(ctk.CTkFrame):
             text_color=COLORS.bg,
             corner_radius=10,
             command=lambda: self._open_dialog(None),
-        ).grid(row=0, column=1, sticky="e", pady=(4, 0))
+        ).grid(row=0, column=2, sticky="e", pady=(4, 0))
+        ctk.CTkButton(
+            header,
+            text="Importa materia (ZIP)",
+            height=40,
+            width=180,
+            font=font(11, "bold"),
+            fg_color=COLORS.surface_alt,
+            hover_color=COLORS.surface_hover,
+            border_width=1,
+            border_color=COLORS.border,
+            text_color=COLORS.text,
+            corner_radius=10,
+            command=lambda: import_subject_flow(self.app, self, self._select),
+        ).grid(row=0, column=1, sticky="e", padx=(0, 8), pady=(4, 0))
 
     def _build_body(self) -> None:
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -347,6 +364,9 @@ class SubjectsView(ctk.CTkFrame):
                 self.db.list_flashcards(subject=selected),
                 self.db.flashcard_stats(selected),
                 self.db.list_note_blocks(selected),
+                self.db.list_summary_chapters(selected),
+                self.db.list_exam_sessions(selected),
+                self.db.list_exam_questions(selected),
             )
         else:
             detail_data = None
@@ -368,6 +388,8 @@ class SubjectsView(ctk.CTkFrame):
         self._detail_header(subject)
         self._detail_countdown(subject)
         self._detail_note_blocks(subject, detail_data[5])
+        self._detail_summary(subject, detail_data[6])
+        self._detail_exam(subject, detail_data[7], detail_data[8])
         self._detail_materials(subject)
         self._detail_videos(subject, detail_data[2])
         self._detail_flashcards(subject, detail_data[3], detail_data[4])
@@ -542,6 +564,20 @@ class SubjectsView(ctk.CTkFrame):
             corner_radius=8,
             command=lambda value=str(subject.get("name") or ""): self.app.open_subject_folder(value, KIND_NOTES),
         ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            actions,
+            text="Esporta ZIP",
+            height=32,
+            width=104,
+            font=font(10),
+            fg_color="transparent",
+            hover_color=COLORS.surface_alt,
+            border_width=1,
+            border_color=COLORS.border,
+            text_color=COLORS.text_muted,
+            corner_radius=8,
+            command=lambda value=str(subject.get("name") or ""): ExportSubjectDialog(self, self.app, value),
+        ).pack(side="left", padx=(0, 6))
         linked = sum(
             int(subject.get(key, 0) or 0)
             for key in ("materials", "videos", "flashcards", "events", "sessions")
@@ -670,7 +706,7 @@ class SubjectsView(ctk.CTkFrame):
         study_hours = study_minutes / 60.0
         percent = min(100, int(round(study_hours / hours * 100))) if hours else 0
         stats = ctk.CTkFrame(self.detail_scroll, fg_color="transparent")
-        stats.grid(row=6, column=0, sticky="ew", pady=(0, 12))
+        stats.grid(row=8, column=0, sticky="ew", pady=(0, 12))
         for column in range(2):
             stats.grid_columnconfigure(column, weight=1, uniform="subject_stats")
 
@@ -716,28 +752,40 @@ class SubjectsView(ctk.CTkFrame):
             str(subject.get("name") or ""),
             on_change=self.refresh,
         )
-        section.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        section.grid(row=5, column=0, sticky="ew", pady=(0, 12))
 
     def _detail_note_blocks(self, subject: dict[str, Any], blocks: list[dict[str, Any]]) -> None:
         NoteBlocksSection(
             self.detail_scroll, self.app, str(subject.get("name") or ""), blocks, on_change=self.refresh
         ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
 
+    def _detail_summary(self, subject: dict[str, Any], chapters: list[dict[str, Any]]) -> None:
+        SummarySection(
+            self.detail_scroll, self.app, str(subject.get("name") or ""), chapters, on_change=self.refresh
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 12))
+
+    def _detail_exam(
+        self, subject: dict[str, Any], sessions: list[dict[str, Any]], questions: list[dict[str, Any]]
+    ) -> None:
+        ExamSection(
+            self.detail_scroll, self.app, str(subject.get("name") or ""), sessions, questions, on_change=self.refresh
+        ).grid(row=4, column=0, sticky="ew", pady=(0, 12))
+
     def _detail_videos(self, subject: dict[str, Any], lessons: list[dict[str, Any]]) -> None:
         VideosSection(self.detail_scroll, self.app, str(subject.get("name") or ""), lessons).grid(
-            row=4, column=0, sticky="ew", pady=(0, 12)
+            row=6, column=0, sticky="ew", pady=(0, 12)
         )
 
     def _detail_flashcards(
         self, subject: dict[str, Any], cards: list[dict[str, Any]], stats: dict[str, int]
     ) -> None:
         FlashcardsSection(self.detail_scroll, self.app, str(subject.get("name") or ""), cards, stats).grid(
-            row=5, column=0, sticky="ew", pady=(0, 12)
+            row=7, column=0, sticky="ew", pady=(0, 12)
         )
 
     def _detail_teacher(self, subject: dict[str, Any]) -> None:
         card = Card(self.detail_scroll)
-        card.grid(row=7, column=0, sticky="ew", pady=(0, 12))
+        card.grid(row=9, column=0, sticky="ew", pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -784,7 +832,7 @@ class SubjectsView(ctk.CTkFrame):
 
     def _detail_links(self, subject: dict[str, Any]) -> None:
         card = Card(self.detail_scroll)
-        card.grid(row=8, column=0, sticky="ew", pady=(0, 12))
+        card.grid(row=10, column=0, sticky="ew", pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,
@@ -825,7 +873,7 @@ class SubjectsView(ctk.CTkFrame):
         if not notes:
             return
         card = Card(self.detail_scroll)
-        card.grid(row=9, column=0, sticky="ew", pady=(0, 4))
+        card.grid(row=11, column=0, sticky="ew", pady=(0, 4))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card,

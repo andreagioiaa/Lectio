@@ -124,6 +124,7 @@ class RenderOptions:
     base_level: str = "section"    # livello della sezione radice se ``embed``
     root_title: str = ""           # titolo della sezione radice se ``embed``
     template: str = ""             # contenuto di un template .tex (documento autonomo)
+    table_of_contents: bool = False  # indice all'inizio (LaTeX/PDF e Word)
 
 
 # ---------------------------------------------------------------------------

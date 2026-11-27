@@ -96,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     if "--hosts-guard" in arguments:
         return _guard_mode(arguments)
 
+    if "--finish-update" in arguments:
+        # Il nuovo exe appena scaricato sostituisce quello vecchio e lo riavvia.
+        from study_manager.services.updater import finish_update
+
+        return finish_update(arguments)
+
     parser = argparse.ArgumentParser(prog="Lectio", description="Gestionale studio e analytics desktop.")
     parser.add_argument("--version", action="store_true", help="Mostra la versione ed esce.")
     parser.add_argument("--debug", action="store_true", help="Abilita log di debug.")
@@ -123,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["LECTIO_DATA_DIR"] = str(Path(options.data_dir).expanduser().resolve())
     elif options.smoke_test:
         os.environ["LECTIO_DATA_DIR"] = tempfile.mkdtemp(prefix="lectio-smoke-")
+    if options.smoke_test:
+        os.environ["LECTIO_NO_UPDATE_CHECK"] = "1"
 
     logging.basicConfig(level=logging.INFO)
     mutex = _acquire_single_instance()

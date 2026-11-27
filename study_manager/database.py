@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import DEFAULT_BLOCKED_APPS, DEFAULT_BLOCKED_SITES, DEFAULT_SETTINGS
+from .paths import PATH_ROOT_DATA, PATH_ROOT_SUBJECTS, StoredPaths
 from .services.spaced_repetition import DEFAULT_EASE_FACTOR, schedule_card
-from .services.subjects import MAX_CFU, cfu_to_hours, parse_exam_date
+from .services.subjects import MAX_CFU, cfu_to_hours, normalize_academic_year, parse_exam_date
 from .utils import (
     LOCAL_DATE_FMT,
     LOCAL_DATETIME_FMT,
@@ -28,7 +29,15 @@ from .utils import (
 
 LOGGER = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 12
+
+# Colonne con percorsi di file salvati in forma relativa quando possibile.
+_STORED_PATH_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("materials", "file_path"),
+    ("video_lessons", "transcript_path"),
+    ("note_blocks", "pdf_path"),
+    ("exam_sessions", "pdf_path"),
+)
 
 # Origine di un evento del calendario. Gli stati ``google_pending_*`` formano
 # la coda offline verso Google Calendar; ``google_pending_delete`` e' un
@@ -66,6 +75,11 @@ GOOGLE_LINKED_SOURCES: tuple[str, ...] = (
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
 
+def _norm_path(path: Any) -> str:
+    """Percorso confrontabile (assoluto, maiuscole/minuscole come il sistema)."""
+    return os.path.normcase(os.path.abspath(str(path or "")))
+
+
 def normalize_hex(value: Any) -> str | None:
     """``#RRGGBB`` maiuscolo oppure ``None`` se il valore non e' un colore."""
     match = _HEX_RE.match(str(value or "").strip())
@@ -98,18 +112,26 @@ DATA_TABLES: tuple[str, ...] = (
     "distraction_attempts",
     "video_lessons",
     "note_blocks",
+    "summary_chapters",
+    "summary_chapter_versions",
     "flashcards",
     "flashcard_reviews",
     "doubts",
+    "exam_sessions",
+    "exam_questions",
     "blocked_sites",
     "blocked_apps",
 )
 
 _RESTORE_DELETE_ORDER: tuple[str, ...] = (
+    "exam_questions",
+    "exam_sessions",
     "doubts",
     "material_notes",
     "flashcard_reviews",
     "flashcards",
+    "summary_chapter_versions",
+    "summary_chapters",
     "note_blocks",
     "materials",
     "distraction_attempts",
@@ -131,9 +153,13 @@ _RESTORE_INSERT_ORDER: tuple[str, ...] = (
     "distraction_attempts",
     "video_lessons",
     "note_blocks",
+    "summary_chapters",
+    "summary_chapter_versions",
     "flashcards",
     "flashcard_reviews",
     "doubts",
+    "exam_sessions",
+    "exam_questions",
     "blocked_sites",
     "blocked_apps",
     "settings",
@@ -168,6 +194,9 @@ CREATE TABLE IF NOT EXISTS materials (
     logged_hours REAL NOT NULL DEFAULT 0,
     calendar_event_id INTEGER,
     created_at TEXT NOT NULL,
+    academic_year TEXT NOT NULL DEFAULT '',
+    opened_at TEXT NOT NULL DEFAULT '',
+    completed_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (calendar_event_id) REFERENCES calendar_events(id) ON DELETE SET NULL
 );
 
@@ -235,6 +264,59 @@ CREATE TABLE IF NOT EXISTS note_blocks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     closed_at TEXT NOT NULL DEFAULT ''
+);
+
+-- Esame (v1.5): appelli e domande d'esame della materia.
+CREATE TABLE IF NOT EXISTS exam_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL DEFAULT '',
+    exam_date TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    pdf_path TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- ``session_id`` NULL = "Senza appello"; ``material_id`` = slide/argomento;
+-- domande con lo stesso ``group_id`` sono la stessa domanda uscita in piu' appelli.
+CREATE TABLE IF NOT EXISTS exam_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL DEFAULT '',
+    session_id INTEGER REFERENCES exam_sessions(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL DEFAULT 1,
+    text TEXT NOT NULL,
+    material_id INTEGER REFERENCES materials(id) ON DELETE SET NULL,
+    solution TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    group_id INTEGER,
+    flashcard_id INTEGER REFERENCES flashcards(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Riassunto del corso (v1.5): capitoli aggiunti dall'utente da PDF e Slide.
+-- ``source`` e' un'istantanea del capitolo di appunti al momento dell'aggiunta.
+CREATE TABLE IF NOT EXISTS summary_chapters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    fmt TEXT NOT NULL DEFAULT 'markdown',
+    note_block_id INTEGER REFERENCES note_blocks(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Versioni precedenti di un capitolo, salvate a ogni sovrascrittura.
+CREATE TABLE IF NOT EXISTS summary_chapter_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chapter_id INTEGER NOT NULL REFERENCES summary_chapters(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    fmt TEXT NOT NULL DEFAULT 'markdown',
+    saved_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS flashcard_reviews (
@@ -340,6 +422,11 @@ CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_card ON flashcard_reviews(card_
 CREATE INDEX IF NOT EXISTS idx_flashcard_reviews_date ON flashcard_reviews(reviewed_at);
 CREATE INDEX IF NOT EXISTS idx_subjects_exam ON subjects(exam_date);
 CREATE INDEX IF NOT EXISTS idx_note_blocks_subject ON note_blocks(subject, position);
+CREATE INDEX IF NOT EXISTS idx_summary_chapters_subject ON summary_chapters(subject, position);
+CREATE INDEX IF NOT EXISTS idx_exam_sessions_subject ON exam_sessions(subject, exam_date);
+CREATE INDEX IF NOT EXISTS idx_exam_questions_session ON exam_questions(session_id, number);
+CREATE INDEX IF NOT EXISTS idx_exam_questions_subject ON exam_questions(subject);
+CREATE INDEX IF NOT EXISTS idx_summary_versions_chapter ON summary_chapter_versions(chapter_id);
 """
 
 
@@ -351,14 +438,74 @@ class Database:
     connessioni thread-locali separate.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, journal_mode: str = "WAL"):
         self.path = Path(path)
+        # WAL e' piu' veloce ma usa tre file (.db, -wal, -shm): in una cartella
+        # sincronizzata (OneDrive...) si usa DELETE, cosi' il database e' un file solo.
+        self.journal_mode = "DELETE" if str(journal_mode).upper() == "DELETE" else "WAL"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._init_lock = threading.Lock()
         self._connections_lock = threading.Lock()
         self._connections: set[sqlite3.Connection] = set()
+        # Senza radici i percorsi restano come sono (es. nei test); l'app le imposta all'avvio.
+        self.stored_paths = StoredPaths()
         self._initialize()
+
+    # ------------------------------------------------------- percorsi salvati
+    def set_path_roots(self, subjects: str | Path | None = None, data: str | Path | None = None) -> None:
+        """Cartelle gestite da Lectio: i file al loro interno si salvano con percorso relativo."""
+        self.stored_paths = StoredPaths({PATH_ROOT_SUBJECTS: subjects, PATH_ROOT_DATA: data})
+
+    def _store_path(self, path: str | Path | None) -> str:
+        return self.stored_paths.to_stored(path)
+
+    def _real_path(self, value: str | Path | None) -> str:
+        return self.stored_paths.to_real(value)
+
+    def _material_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if "file_path" in item:
+            item["file_path"] = self._real_path(item.get("file_path"))
+        return item
+
+    def _doubt_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if item.get("material_path"):
+            item["material_path"] = self._real_path(item["material_path"])
+        return item
+
+    def _block_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if "pdf_path" in item:
+            item["pdf_path"] = self._real_path(item.get("pdf_path"))
+        return item
+
+    def _video_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if "transcript_path" in item:
+            item["transcript_path"] = self._real_path(item.get("transcript_path"))
+        return item
+
+    def relativize_stored_paths(self) -> int:
+        """Riscrive in forma relativa i percorsi assoluti che stanno nelle cartelle gestite."""
+        if not self.stored_paths.roots:
+            return 0
+        connection = self._connection()
+        changed = 0
+        for table, column in _STORED_PATH_COLUMNS:
+            rows = connection.execute(
+                f"SELECT id, {column} AS value FROM {table} WHERE TRIM({column}) <> ''"
+            ).fetchall()
+            for row in rows:
+                current = str(row["value"] or "")
+                stored = self._store_path(current)
+                if stored != current:
+                    connection.execute(
+                        f"UPDATE {table} SET {column} = ? WHERE id = ?", (stored, int(row["id"]))
+                    )
+                    changed += 1
+        return changed
 
     # ------------------------------------------------------------------ core
     def _connection(self) -> sqlite3.Connection:
@@ -379,7 +526,7 @@ class Database:
             connection = sqlite3.connect(str(self.path), timeout=12, isolation_level=None)
             try:
                 connection.row_factory = sqlite3.Row
-                connection.execute("PRAGMA journal_mode = WAL")
+                connection.execute(f"PRAGMA journal_mode = {self.journal_mode}")
                 connection.execute("PRAGMA synchronous = NORMAL")
                 connection.execute("PRAGMA foreign_keys = ON")
                 connection.execute("PRAGMA busy_timeout = 12000")
@@ -400,6 +547,17 @@ class Database:
                 "ALTER TABLE materials ADD COLUMN calendar_event_id INTEGER "
                 "REFERENCES calendar_events(id) ON DELETE SET NULL"
             )
+        if columns and "academic_year" not in columns:
+            # Schema v9: anno accademico di provenienza del materiale (es. 2025/26).
+            connection.execute(
+                "ALTER TABLE materials ADD COLUMN academic_year TEXT NOT NULL DEFAULT ''"
+            )
+        for column in ("opened_at", "completed_at"):
+            # Schema v12: stato di studio della slide (aperta / completata dall'utente).
+            if columns and column not in columns:
+                connection.execute(
+                    f"ALTER TABLE materials ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                )
         columns = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(calendar_events)").fetchall()
@@ -653,17 +811,19 @@ class Database:
         subject: str,
         target_hours: float,
         calendar_event_id: int | None = None,
+        academic_year: str = "",
     ) -> int:
         cursor = self._connection().execute(
             "INSERT INTO materials(title, file_path, subject, target_hours, logged_hours, "
-            "calendar_event_id, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)",
+            "calendar_event_id, created_at, academic_year) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
             (
                 title.strip()[:250] or "Materiale",
-                file_path.strip(),
+                self._store_path(file_path),
                 subject.strip()[:120],
                 max(0.0, safe_float(target_hours)),
                 calendar_event_id,
                 now_str(),
+                normalize_academic_year(academic_year),
             ),
         )
         return int(cursor.lastrowid)
@@ -676,19 +836,32 @@ class Database:
         subject: str,
         target_hours: float,
         calendar_event_id: int | None,
+        academic_year: str | None = None,
     ) -> None:
-        self._connection().execute(
+        """Aggiorna un materiale; ``academic_year=None`` lascia l'anno com'e'."""
+        values: list[Any] = [
+            title.strip()[:250] or "Materiale",
+            self._store_path(file_path),
+            subject.strip()[:120],
+            max(0.0, safe_float(target_hours)),
+            calendar_event_id,
+        ]
+        sql = (
             "UPDATE materials SET title = ?, file_path = ?, subject = ?, target_hours = ?, "
-            "calendar_event_id = ? WHERE id = ?",
-            (
-                title.strip()[:250] or "Materiale",
-                file_path.strip(),
-                subject.strip()[:120],
-                max(0.0, safe_float(target_hours)),
-                calendar_event_id,
-                int(material_id),
-            ),
+            "calendar_event_id = ?"
         )
+        if academic_year is not None:
+            sql += ", academic_year = ?"
+            values.append(normalize_academic_year(academic_year))
+        values.append(int(material_id))
+        self._connection().execute(sql + " WHERE id = ?", tuple(values))
+
+    def list_academic_years(self) -> list[str]:
+        """Anni accademici gia' usati nei materiali (piu' recenti per primi)."""
+        rows = self._connection().execute(
+            "SELECT DISTINCT academic_year FROM materials WHERE TRIM(academic_year) <> ''"
+        ).fetchall()
+        return sorted({str(row["academic_year"]) for row in rows}, reverse=True)
 
     def find_material_by_path(self, file_path: str) -> dict[str, Any] | None:
         """Materiale gia' registrato per lo stesso file (confronto case-insensitive)."""
@@ -699,9 +872,9 @@ class Database:
             "SELECT * FROM materials WHERE TRIM(file_path) <> ''"
         ).fetchall()
         for row in rows:
-            current = os.path.normcase(os.path.abspath(str(row["file_path"])))
+            current = os.path.normcase(os.path.abspath(self._real_path(row["file_path"])))
             if current == wanted:
-                return dict(row)
+                return self._material_out(row)
         return None
 
     def relocate_paths(self, old_dir: str | Path, new_dir: str | Path) -> int:
@@ -714,12 +887,12 @@ class Database:
         new_root = Path(new_dir)
         connection = self._connection()
         changed = 0
-        for table, column in (("materials", "file_path"), ("video_lessons", "transcript_path")):
+        for table, column in _STORED_PATH_COLUMNS:
             rows = connection.execute(
                 f"SELECT id, {column} AS value FROM {table} WHERE TRIM({column}) <> ''"
             ).fetchall()
             for row in rows:
-                raw = os.path.abspath(str(row["value"]))
+                raw = os.path.abspath(self._real_path(row["value"]))
                 normalized = os.path.normcase(raw)
                 if normalized != old_root and not normalized.startswith(old_root + os.sep):
                     continue
@@ -727,10 +900,48 @@ class Database:
                 target = str(new_root / relative) if relative else str(new_root)
                 connection.execute(
                     f"UPDATE {table} SET {column} = ? WHERE id = ?",
-                    (target, int(row["id"])),
+                    (self._store_path(target), int(row["id"])),
                 )
                 changed += 1
         return changed
+
+    def mark_material_opened(self, material_id: int) -> None:
+        """Segna il materiale come aperto almeno una volta (slide «in corso»)."""
+        self._connection().execute(
+            "UPDATE materials SET opened_at = ? WHERE id = ? AND TRIM(opened_at) = ''",
+            (now_str(), int(material_id)),
+        )
+
+    def mark_material_opened_by_path(self, file_path: str | Path) -> None:
+        found = self.find_material_by_path(str(file_path or ""))
+        if found is not None:
+            self.mark_material_opened(int(found["id"]))
+
+    def set_material_completed(self, material_id: int, completed: bool = True) -> None:
+        """Segna (o toglie) la slide come completata dall'utente."""
+        self._connection().execute(
+            "UPDATE materials SET completed_at = ? WHERE id = ?",
+            (now_str() if completed else "", int(material_id)),
+        )
+
+    def summary_pdf_paths(self, subject: str) -> set[str]:
+        """PDF (percorsi normalizzati) i cui appunti sono capitoli del riassunto del corso."""
+        rows = self._connection().execute(
+            "SELECT DISTINCT b.pdf_path FROM summary_chapters c "
+            "JOIN note_blocks b ON b.id = c.note_block_id "
+            "WHERE LOWER(TRIM(c.subject)) = LOWER(TRIM(?)) AND TRIM(b.pdf_path) <> ''",
+            (str(subject or ""),),
+        ).fetchall()
+        return {_norm_path(self._real_path(row["pdf_path"])) for row in rows}
+
+    def note_block_pdf_paths(self, subject: str) -> set[str]:
+        """PDF (percorsi normalizzati) con almeno un capitolo di appunti nella materia."""
+        rows = self._connection().execute(
+            "SELECT DISTINCT pdf_path FROM note_blocks "
+            "WHERE LOWER(TRIM(subject)) = LOWER(TRIM(?)) AND TRIM(pdf_path) <> ''",
+            (str(subject or ""),),
+        ).fetchall()
+        return {_norm_path(self._real_path(row["pdf_path"])) for row in rows}
 
     def delete_material(self, material_id: int) -> None:
         self._connection().execute("DELETE FROM materials WHERE id = ?", (int(material_id),))
@@ -742,7 +953,7 @@ class Database:
             "WHERE m.id = ?",
             (int(material_id),),
         ).fetchone()
-        return dict(row) if row is not None else None
+        return self._material_out(row) if row is not None else None
 
     def list_materials(self) -> list[dict[str, Any]]:
         rows = self._connection().execute(
@@ -750,7 +961,7 @@ class Database:
             "FROM materials m LEFT JOIN calendar_events e ON e.id = m.calendar_event_id "
             "ORDER BY LOWER(m.subject), LOWER(m.title)"
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._material_out(row) for row in rows]
 
     def list_materials_for_subject(self, subject: str) -> list[dict[str, Any]]:
         """Materiali collegati a una materia, ignorando maiuscole e spazi."""
@@ -761,7 +972,7 @@ class Database:
             "ORDER BY LOWER(m.title)",
             (str(subject or ""),),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._material_out(row) for row in rows]
 
     def list_materials_without_subject(self) -> list[dict[str, Any]]:
         rows = self._connection().execute(
@@ -770,7 +981,7 @@ class Database:
             "WHERE TRIM(m.subject) = '' "
             "ORDER BY LOWER(m.title)"
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._material_out(row) for row in rows]
 
     def count_materials_without_subject(self) -> int:
         row = self._connection().execute(
@@ -947,7 +1158,7 @@ class Database:
             "WHERE d.id = ?",
             (int(doubt_id),),
         ).fetchone()
-        return dict(row) if row is not None else None
+        return self._doubt_out(row) if row is not None else None
 
     def list_doubts(
         self,
@@ -979,7 +1190,7 @@ class Database:
             "d.created_at DESC, d.id DESC"
         )
         rows = self._connection().execute(sql, tuple(params)).fetchall()
-        return [dict(row) for row in rows]
+        return [self._doubt_out(row) for row in rows]
 
     def doubt_stats(self, subject: str | None = None) -> dict[str, int]:
         clauses: list[str] = []
@@ -1073,7 +1284,7 @@ class Database:
             "duration_seconds = ?, status = 'completed', progress = 1, model = ?, "
             "language = ?, error = '', updated_at = ? WHERE id = ?",
             (
-                transcript_path.strip(),
+                self._store_path(transcript_path),
                 transcript_name.strip()[:250],
                 max(0.0, safe_float(duration_seconds)),
                 model.strip()[:80],
@@ -1093,7 +1304,7 @@ class Database:
             "UPDATE video_lessons SET transcript_path = ?, transcript_name = ?, "
             "status = 'completed', error = '', updated_at = ? WHERE id = ?",
             (
-                transcript_path.strip(),
+                self._store_path(transcript_path),
                 transcript_name.strip()[:250],
                 now_str(),
                 int(video_id),
@@ -1111,7 +1322,7 @@ class Database:
         row = self._connection().execute(
             "SELECT * FROM video_lessons WHERE id = ?", (int(video_id),)
         ).fetchone()
-        return dict(row) if row is not None else None
+        return self._video_out(row) if row is not None else None
 
     def list_video_lessons(self, subject: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM video_lessons"
@@ -1121,7 +1332,7 @@ class Database:
             params = (subject.strip(),)
         sql += " ORDER BY LOWER(subject), updated_at DESC, id DESC"
         rows = self._connection().execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+        return [self._video_out(row) for row in rows]
 
     def delete_video_lesson(self, video_id: int) -> None:
         self._connection().execute(
@@ -1403,7 +1614,8 @@ class Database:
                     "DELETE FROM sqlite_sequence WHERE name IN "
                     "('sessions', 'distraction_attempts', 'materials', 'material_notes', "
                     "'video_lessons', 'calendar_events', 'blocked_sites', 'blocked_apps', "
-                    "'flashcards', 'flashcard_reviews', 'doubts', 'note_blocks')"
+                    "'flashcards', 'flashcard_reviews', 'doubts', 'note_blocks', "
+                    "'summary_chapters', 'summary_chapter_versions', 'exam_sessions', 'exam_questions')"
                 )
             except sqlite3.Error:
                 pass
@@ -1477,7 +1689,7 @@ class Database:
                 clean_subject,
                 safe_int(position),
                 clean_title,
-                str(pdf_path or ""),
+                self._store_path(pdf_path),
                 str(source or ""),
                 str(fmt or "markdown"),
                 str(meta or "{}"),
@@ -1502,6 +1714,8 @@ class Database:
                     value = str(value or "").strip()[:300]
                     if not value:
                         raise ValueError("Il titolo del capitolo e' obbligatorio.")
+                elif key == "pdf_path":
+                    value = self._store_path(value)
                 else:
                     value = str(value if value is not None else "")
                 sets.append(f"{key} = ?")
@@ -1539,7 +1753,7 @@ class Database:
         row = self._connection().execute(
             "SELECT * FROM note_blocks WHERE id = ?", (int(block_id),)
         ).fetchone()
-        return dict(row) if row is not None else None
+        return self._block_out(row) if row is not None else None
 
     def list_note_blocks(self, subject: str | None = None) -> list[dict[str, Any]]:
         """Blocchi in ordine crescente di numero di capitolo, con il conteggio delle flashcard."""
@@ -1554,7 +1768,7 @@ class Database:
             sql += " WHERE LOWER(b.subject) = LOWER(?)"
             params = (str(subject).strip(),)
         sql += " ORDER BY LOWER(b.subject), b.position ASC, LOWER(b.title), b.id ASC"
-        return [dict(row) for row in self._connection().execute(sql, params).fetchall()]
+        return [self._block_out(row) for row in self._connection().execute(sql, params).fetchall()]
 
     def note_block_labels(self) -> dict[int, str]:
         """``{id: "1. Introduzione"}`` per mostrare il capitolo accanto alle flashcard."""
@@ -1566,6 +1780,319 @@ class Database:
     def delete_note_block(self, block_id: int) -> None:
         """Elimina il blocco; le sue flashcard restano nella materia, senza capitolo."""
         self._connection().execute("DELETE FROM note_blocks WHERE id = ?", (int(block_id),))
+
+    # ------------------------------------------------------------------ esame
+    def _exam_session_out(self, row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        if "pdf_path" in item:
+            item["pdf_path"] = self._real_path(item.get("pdf_path"))
+        return item
+
+    def add_exam_session(self, subject: str, exam_date: str = "", title: str = "", pdf_path: str = "",
+                         notes: str = "") -> int:
+        clean_subject = str(subject or "").strip()[:150]
+        if not clean_subject:
+            raise ValueError("Scegli la materia dell'appello.")
+        timestamp = now_str()
+        cursor = self._connection().execute(
+            "INSERT INTO exam_sessions(subject, exam_date, title, pdf_path, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (clean_subject, parse_exam_date(exam_date), str(title or "").strip()[:200],
+             self._store_path(pdf_path), str(notes or "").strip()[:4000], timestamp, timestamp),
+        )
+        return int(cursor.lastrowid)
+
+    def update_exam_session(self, session_id: int, exam_date: str, title: str = "", pdf_path: str = "",
+                            notes: str = "") -> None:
+        self._connection().execute(
+            "UPDATE exam_sessions SET exam_date = ?, title = ?, pdf_path = ?, notes = ?, updated_at = ? "
+            "WHERE id = ?",
+            (parse_exam_date(exam_date), str(title or "").strip()[:200], self._store_path(pdf_path),
+             str(notes or "").strip()[:4000], now_str(), int(session_id)),
+        )
+
+    def get_exam_session(self, session_id: int) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            "SELECT * FROM exam_sessions WHERE id = ?", (int(session_id),)
+        ).fetchone()
+        return self._exam_session_out(row) if row is not None else None
+
+    def list_exam_sessions(self, subject: str) -> list[dict[str, Any]]:
+        """Appelli della materia, dal piu' recente (quelli senza data in fondo)."""
+        rows = self._connection().execute(
+            "SELECT s.*, (SELECT COUNT(*) FROM exam_questions q WHERE q.session_id = s.id) AS questions "
+            "FROM exam_sessions s WHERE LOWER(TRIM(s.subject)) = LOWER(TRIM(?)) "
+            "ORDER BY CASE WHEN s.exam_date = '' THEN 1 ELSE 0 END, s.exam_date DESC, s.id DESC",
+            (str(subject or ""),),
+        ).fetchall()
+        return [self._exam_session_out(row) for row in rows]
+
+    def delete_exam_session(self, session_id: int) -> None:
+        """Elimina l'appello e le sue domande (le flashcard create restano)."""
+        self._connection().execute("DELETE FROM exam_sessions WHERE id = ?", (int(session_id),))
+
+    def next_exam_question_number(self, session_id: int | None, subject: str = "") -> int:
+        if session_id is None:
+            row = self._connection().execute(
+                "SELECT COALESCE(MAX(number), 0) AS top FROM exam_questions "
+                "WHERE session_id IS NULL AND LOWER(TRIM(subject)) = LOWER(TRIM(?))", (str(subject or ""),)
+            ).fetchone()
+        else:
+            row = self._connection().execute(
+                "SELECT COALESCE(MAX(number), 0) AS top FROM exam_questions WHERE session_id = ?",
+                (int(session_id),),
+            ).fetchone()
+        return safe_int(row["top"] if row else 0) + 1
+
+    def add_exam_question(self, subject: str, text: str, session_id: int | None = None,
+                          number: int | None = None, material_id: int | None = None,
+                          solution: str = "", notes: str = "") -> int:
+        clean_subject = str(subject or "").strip()[:150]
+        clean_text = str(text or "").strip()
+        if not clean_subject:
+            raise ValueError("Scegli la materia della domanda.")
+        if not clean_text:
+            raise ValueError("Il testo della domanda e' obbligatorio.")
+        if number is None or safe_int(number) <= 0:
+            number = self.next_exam_question_number(session_id, clean_subject)
+        timestamp = now_str()
+        cursor = self._connection().execute(
+            "INSERT INTO exam_questions(subject, session_id, number, text, material_id, solution, notes, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (clean_subject, session_id, safe_int(number), clean_text[:20000], material_id,
+             str(solution or "").strip()[:20000], str(notes or "").strip()[:4000], timestamp, timestamp),
+        )
+        return int(cursor.lastrowid)
+
+    def update_exam_question(self, question_id: int, **values: Any) -> None:
+        """Aggiorna i campi indicati: session_id, number, text, material_id, solution, notes."""
+        sets: list[str] = []
+        params: list[Any] = []
+        for key in ("session_id", "number", "text", "material_id", "solution", "notes", "flashcard_id"):
+            if key not in values:
+                continue
+            value = values[key]
+            if key == "text":
+                value = str(value or "").strip()
+                if not value:
+                    raise ValueError("Il testo della domanda e' obbligatorio.")
+            elif key == "number":
+                value = max(1, safe_int(value))
+            elif key in ("solution", "notes"):
+                value = str(value or "").strip()
+            sets.append(f"{key} = ?")
+            params.append(value)
+        if not sets:
+            return
+        sets.append("updated_at = ?")
+        params.extend([now_str(), int(question_id)])
+        self._connection().execute(f"UPDATE exam_questions SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+    def get_exam_question(self, question_id: int) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            "SELECT * FROM exam_questions WHERE id = ?", (int(question_id),)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_exam_questions(self, subject: str) -> list[dict[str, Any]]:
+        """Domande della materia con appello, argomento (slide) e numero di uscite."""
+        rows = self._connection().execute(
+            "SELECT q.*, s.exam_date, s.title AS session_title, m.title AS topic, "
+            "CASE WHEN q.group_id IS NULL THEN 1 ELSE "
+            "(SELECT COUNT(*) FROM exam_questions g WHERE g.group_id = q.group_id) END AS occurrences "
+            "FROM exam_questions q "
+            "LEFT JOIN exam_sessions s ON s.id = q.session_id "
+            "LEFT JOIN materials m ON m.id = q.material_id "
+            "WHERE LOWER(TRIM(q.subject)) = LOWER(TRIM(?)) "
+            "ORDER BY CASE WHEN q.session_id IS NULL THEN 1 ELSE 0 END, "
+            "CASE WHEN s.exam_date = '' THEN 1 ELSE 0 END, s.exam_date DESC, q.session_id DESC, "
+            "q.number ASC, q.id ASC",
+            (str(subject or ""),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_exam_question(self, question_id: int) -> None:
+        question = self.get_exam_question(question_id)
+        self._connection().execute("DELETE FROM exam_questions WHERE id = ?", (int(question_id),))
+        if question is not None and question.get("group_id") is not None:
+            self._tidy_exam_group(int(question["group_id"]))
+
+    def _tidy_exam_group(self, group_id: int) -> None:
+        """Un gruppo con una sola domanda non e' piu' una ricorrenza."""
+        rows = self._connection().execute(
+            "SELECT id FROM exam_questions WHERE group_id = ?", (int(group_id),)
+        ).fetchall()
+        if len(rows) == 1:
+            self._connection().execute("UPDATE exam_questions SET group_id = NULL WHERE id = ?", (rows[0]["id"],))
+
+    def link_exam_questions(self, question_id: int, other_id: int) -> int:
+        """Segna due domande come la stessa domanda (uscita in piu' appelli); unisce i gruppi."""
+        first = self.get_exam_question(question_id)
+        second = self.get_exam_question(other_id)
+        if first is None or second is None or int(question_id) == int(other_id):
+            raise ValueError("Domande non valide.")
+        groups = [g for g in (first.get("group_id"), second.get("group_id")) if g is not None]
+        target = min(groups) if groups else min(int(question_id), int(other_id))
+        connection = self._connection()
+        for group in groups:
+            connection.execute("UPDATE exam_questions SET group_id = ? WHERE group_id = ?", (target, group))
+        connection.execute(
+            "UPDATE exam_questions SET group_id = ? WHERE id IN (?, ?)", (target, int(question_id), int(other_id))
+        )
+        return target
+
+    def unlink_exam_question(self, question_id: int) -> None:
+        question = self.get_exam_question(question_id)
+        if question is None or question.get("group_id") is None:
+            return
+        self._connection().execute("UPDATE exam_questions SET group_id = NULL WHERE id = ?", (int(question_id),))
+        self._tidy_exam_group(int(question["group_id"]))
+
+    # ------------------------------------------------------- riassunto del corso
+    def list_summary_chapters(self, subject: str, with_source: bool = False) -> list[dict[str, Any]]:
+        """Capitoli del riassunto di una materia, in ordine; con il numero di versioni precedenti."""
+        columns = "c.*" if with_source else (
+            "c.id, c.subject, c.position, c.title, c.fmt, c.note_block_id, c.created_at, "
+            "c.updated_at, LENGTH(c.source) AS source_length"
+        )
+        rows = self._connection().execute(
+            f"SELECT {columns}, "
+            "(SELECT COUNT(*) FROM summary_chapter_versions v WHERE v.chapter_id = c.id) AS versions, "
+            "b.title AS block_title FROM summary_chapters c "
+            "LEFT JOIN note_blocks b ON b.id = c.note_block_id "
+            "WHERE LOWER(TRIM(c.subject)) = LOWER(TRIM(?)) "
+            "ORDER BY c.position ASC, c.id ASC",
+            (str(subject or ""),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_summary_chapter(self, chapter_id: int) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            "SELECT * FROM summary_chapters WHERE id = ?", (int(chapter_id),)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def find_summary_chapter_for_block(self, subject: str, note_block_id: int) -> dict[str, Any] | None:
+        row = self._connection().execute(
+            "SELECT * FROM summary_chapters WHERE note_block_id = ? "
+            "AND LOWER(TRIM(subject)) = LOWER(TRIM(?)) ORDER BY id LIMIT 1",
+            (int(note_block_id), str(subject or "")),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _renumber_summary(self, subject: str, ordered_ids: list[int]) -> None:
+        connection = self._connection()
+        for index, chapter_id in enumerate(ordered_ids, start=1):
+            connection.execute(
+                "UPDATE summary_chapters SET position = ? WHERE id = ?", (index, int(chapter_id))
+            )
+
+    def add_summary_chapter(
+        self,
+        subject: str,
+        title: str,
+        source: str,
+        fmt: str = "markdown",
+        position: int | None = None,
+        note_block_id: int | None = None,
+    ) -> int:
+        """Aggiunge un capitolo; ``position`` (1 = primo) sposta in avanti quelli successivi."""
+        clean_subject = str(subject or "").strip()[:150]
+        clean_title = str(title or "").strip()[:300]
+        if not clean_subject:
+            raise ValueError("Scegli la materia del riassunto.")
+        if not clean_title:
+            raise ValueError("Il titolo del capitolo e' obbligatorio.")
+        existing = [int(row["id"]) for row in self.list_summary_chapters(clean_subject)]
+        timestamp = now_str()
+        connection = self._connection()
+        cursor = connection.execute(
+            "INSERT INTO summary_chapters(subject, position, title, source, fmt, note_block_id, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (clean_subject, len(existing) + 1, clean_title, str(source or ""),
+             "latex" if fmt == "latex" else "markdown", note_block_id, timestamp, timestamp),
+        )
+        chapter_id = int(cursor.lastrowid)
+        index = len(existing) if position is None else max(0, min(len(existing), safe_int(position) - 1))
+        existing.insert(index, chapter_id)
+        self._renumber_summary(clean_subject, existing)
+        return chapter_id
+
+    def overwrite_summary_chapter(
+        self,
+        chapter_id: int,
+        source: str,
+        fmt: str = "markdown",
+        title: str | None = None,
+        note_block_id: int | None = None,
+    ) -> None:
+        """Sostituisce il testo del capitolo; la versione precedente finisce nello storico."""
+        current = self.get_summary_chapter(chapter_id)
+        if current is None:
+            raise ValueError("Il capitolo del riassunto non esiste piu'.")
+        connection = self._connection()
+        timestamp = now_str()
+        connection.execute(
+            "INSERT INTO summary_chapter_versions(chapter_id, title, source, fmt, saved_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (int(chapter_id), current["title"], current["source"], current["fmt"], timestamp),
+        )
+        new_title = str(title or "").strip()[:300] or str(current["title"])
+        connection.execute(
+            "UPDATE summary_chapters SET title = ?, source = ?, fmt = ?, note_block_id = ?, "
+            "updated_at = ? WHERE id = ?",
+            (new_title, str(source or ""), "latex" if fmt == "latex" else "markdown",
+             note_block_id if note_block_id is not None else current.get("note_block_id"),
+             timestamp, int(chapter_id)),
+        )
+
+    def rename_summary_chapter(self, chapter_id: int, title: str) -> None:
+        clean = str(title or "").strip()[:300]
+        if not clean:
+            raise ValueError("Il titolo del capitolo e' obbligatorio.")
+        self._connection().execute(
+            "UPDATE summary_chapters SET title = ?, updated_at = ? WHERE id = ?",
+            (clean, now_str(), int(chapter_id)),
+        )
+
+    def move_summary_chapter(self, chapter_id: int, delta: int) -> bool:
+        """Sposta il capitolo di ``delta`` posizioni (-1 su, +1 giu'); False se non si muove."""
+        current = self.get_summary_chapter(chapter_id)
+        if current is None:
+            return False
+        ids = [int(row["id"]) for row in self.list_summary_chapters(current["subject"])]
+        index = ids.index(int(chapter_id))
+        target = max(0, min(len(ids) - 1, index + int(delta)))
+        if target == index:
+            return False
+        ids.insert(target, ids.pop(index))
+        self._renumber_summary(current["subject"], ids)
+        return True
+
+    def delete_summary_chapter(self, chapter_id: int) -> None:
+        current = self.get_summary_chapter(chapter_id)
+        self._connection().execute("DELETE FROM summary_chapters WHERE id = ?", (int(chapter_id),))
+        if current is not None:
+            ids = [int(row["id"]) for row in self.list_summary_chapters(current["subject"])]
+            self._renumber_summary(current["subject"], ids)
+
+    def list_summary_versions(self, chapter_id: int) -> list[dict[str, Any]]:
+        rows = self._connection().execute(
+            "SELECT id, chapter_id, title, fmt, saved_at, LENGTH(source) AS source_length "
+            "FROM summary_chapter_versions WHERE chapter_id = ? ORDER BY saved_at DESC, id DESC",
+            (int(chapter_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def restore_summary_version(self, version_id: int) -> None:
+        """Rimette in uso una versione precedente; quella attuale va nello storico."""
+        row = self._connection().execute(
+            "SELECT * FROM summary_chapter_versions WHERE id = ?", (int(version_id),)
+        ).fetchone()
+        if row is None:
+            raise ValueError("Versione non trovata.")
+        self.overwrite_summary_chapter(int(row["chapter_id"]), row["source"], row["fmt"], row["title"])
+        self._connection().execute("DELETE FROM summary_chapter_versions WHERE id = ?", (int(version_id),))
 
     # ---------------------------------------------------------------- subjects
     def list_subjects(self, search: str = "") -> list[dict[str, Any]]:
@@ -1761,6 +2288,9 @@ class Database:
                     "calendar_events",
                     "doubts",
                     "note_blocks",
+                    "summary_chapters",
+                    "exam_sessions",
+                    "exam_questions",
                 ):
                     connection.execute(
                         f"UPDATE {table} SET subject = ? "

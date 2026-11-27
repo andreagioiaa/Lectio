@@ -1,7 +1,8 @@
+# Generato da tools/release.py a partire da APP_VERSION: non modificare a mano.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 4, 2, 0),
-    prodvers=(1, 4, 2, 0),
+    filevers=(0, 1, 5, 0),
+    prodvers=(0, 1, 5, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +18,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Lectio'),
             StringStruct('FileDescription', 'Lectio - Gestionale Studio & Analytics'),
-            StringStruct('FileVersion', '1.4.2.0'),
+            StringStruct('FileVersion', '0.1.5.0'),
             StringStruct('InternalName', 'Lectio'),
             StringStruct('LegalCopyright', 'Lectio'),
             StringStruct('OriginalFilename', 'Lectio.exe'),
             StringStruct('ProductName', 'Lectio'),
-            StringStruct('ProductVersion', '1.4.2.0')
+            StringStruct('ProductVersion', '0.1.5.0')
           ]
         )
       ]

@@ -66,6 +66,7 @@ from ..services.pdf_tools.document import (
 from ..services.pdf_tools.export import (
     EXPORT_FORMATS,
     FORMAT_DOCX,
+    FORMAT_MD,
     FORMAT_TEX,
     FORMAT_TXT,
     SOURCE_LATEX,
@@ -102,6 +103,8 @@ from ..services.pdf_tools.text_removal import (
 )
 from .latex_structure_dialog import LEVEL_LABELS, LatexStructureDialog
 from .note_block_dialog import NoteBlockDialog
+from .pandoc_prompt import ensure_pandoc
+from .summary_view import SummaryAddDialog
 from .preview_editing import PreviewSourceMap, escape_for_source, newline_for_source
 from .text_shortcuts import install_text_shortcuts
 from .math_render import MathRenderer
@@ -122,7 +125,10 @@ OCR_CHOICES = {
 OCR_ENGINE_CHOICES = {"Tesseract": "tesseract", "PaddleOCR": "paddle"}
 MATH_CHOICES = {"Integrato (euristico)": "none", "Marker": "marker", "Nougat": "nougat"}
 MATH_SCOPE_CHOICES = {"Solo pagine con formule": "math_pages", "Tutte le pagine": "all"}
-BATCH_FORMAT_CHOICES = {".txt": [FORMAT_TXT], ".tex": [FORMAT_TEX], ".docx": [FORMAT_DOCX], "Tutti": list(EXPORT_FORMATS)}
+BATCH_FORMAT_CHOICES = {
+    ".txt": [FORMAT_TXT], ".md": [FORMAT_MD], ".tex": [FORMAT_TEX], ".docx": [FORMAT_DOCX],
+    "Tutti": list(EXPORT_FORMATS),
+}
 PREVIEW_MODES = ("Anteprima", "LaTeX", "TXT")
 SOURCE_MODES = ("Markdown", "LaTeX")
 LAYOUT_MODES = ("Affiancati", "Sovrapposti")
@@ -620,12 +626,17 @@ class PdfView(ctk.CTkFrame):
         self._small_label(export, "Esporta il documento aperto").pack(anchor="w", padx=16, pady=(6, 4))
         formats = ctk.CTkFrame(export, fg_color="transparent")
         formats.pack(fill="x", padx=16)
-        formats.grid_columnconfigure((0, 1, 2), weight=1)
+        formats.grid_columnconfigure(tuple(range(len(EXPORT_FORMATS))), weight=1)
         self.export_buttons: list[ctk.CTkButton] = []
+        last = len(EXPORT_FORMATS) - 1
         for column, fmt in enumerate(EXPORT_FORMATS):
             button = self._button(formats, f".{fmt}", lambda value=fmt: self.export_current(value))
-            button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 3, 0 if column == 2 else 3))
+            button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 3, 0 if column == last else 3))
             self.export_buttons.append(button)
+
+        self._small_label(export, "Riassunto del corso della materia").pack(anchor="w", padx=16, pady=(10, 4))
+        self.summary_button = self._button(export, "📘  Aggiungi al riassunto del corso", self.add_current_to_summary)
+        self.summary_button.pack(fill="x", padx=16)
 
         self._small_label(export, "Esporta tutti i documenti estratti").pack(anchor="w", padx=16, pady=(10, 4))
         batch = ctk.CTkFrame(export, fg_color="transparent")
@@ -1359,6 +1370,7 @@ class PdfView(ctk.CTkFrame):
                 state="normal" if doc is not None and not busy else "disabled",
             )
             self.close_block_button.configure(state="normal" if linked and not busy else "disabled")
+            self.summary_button.configure(state="normal" if has_doc and not busy else "disabled")
             self.flashcard_button.configure(state="normal" if doc is not None and not busy else "disabled")
             pending = sum(1 for doubt in doc.doubts if not doubt.get("card")) if doc is not None else 0
             self.doubts_button.configure(
@@ -1599,6 +1611,56 @@ class PdfView(ctk.CTkFrame):
         self._refresh_subject_pages()
         label = f"{doc.block_position}. {doc.block_title}"
         self.app.toast(f"Capitolo «{label}» salvato in {doc.block_subject}")
+        return True
+
+    def add_current_to_summary(self) -> bool:
+        """Copia il testo del documento nel riassunto del corso (nuovo capitolo o sovrascrittura)."""
+        doc = self._current_doc()
+        if doc is None or self.controller.is_running():
+            return False
+        self._commit_editor()
+        if not doc.source.strip():
+            return False
+        subject = doc.block_subject or self.selected_subject()
+        if not subject:
+            messagebox.showinfo(
+                "Riassunto del corso",
+                "Collega prima il documento a una materia («Collega a materia») oppure scegli la materia "
+                "nelle opzioni: il riassunto appartiene a una materia.",
+                parent=self,
+            )
+            return False
+        if doc.block_id is not None:
+            self._sync_block(doc)
+        chapters = self.db.list_summary_chapters(subject)
+        linked = self.db.find_summary_chapter_for_block(subject, doc.block_id) if doc.block_id is not None else None
+        title = doc.block_title or doc.title.strip() or _pretty_name(doc.path)
+        result = SummaryAddDialog(
+            self, chapters, subject, title, linked_chapter_id=int(linked["id"]) if linked else None,
+        ).show()
+        if result is None:
+            return False
+        try:
+            if result["mode"] == "new":
+                self.db.add_summary_chapter(
+                    subject, result["title"], doc.source, doc.fmt, position=result["position"],
+                    note_block_id=doc.block_id,
+                )
+                label = result["title"]
+            else:
+                self.db.overwrite_summary_chapter(
+                    result["chapter_id"], doc.source, doc.fmt, note_block_id=doc.block_id,
+                )
+                label = result["title"]
+        except Exception as exc:
+            LOGGER.exception("Aggiunta al riassunto non riuscita.")
+            messagebox.showerror("Riassunto del corso", f"Aggiunta non riuscita:\n{exc}", parent=self)
+            return False
+        self._refresh_subject_pages()
+        verb = "aggiunto al" if result["mode"] == "new" else "aggiornato nel"
+        message = f"«{label}» {verb} riassunto di {subject}"
+        self._set_status(message)
+        self.app.toast(message)
         return True
 
     def close_current_block(self) -> None:
@@ -3401,11 +3463,14 @@ class PdfView(ctk.CTkFrame):
         return str(doc.path.parent)
 
     def export_current(self, fmt: str) -> None:
+        if fmt == FORMAT_DOCX and not find_pandoc():
+            ensure_pandoc(self.app, self, lambda: self.export_current(fmt))
+            return
         self._commit_editor()
         doc = self._current_doc()
         if doc is None or not doc.source.strip():
             return
-        labels = {FORMAT_TXT: "Testo", FORMAT_TEX: "LaTeX", FORMAT_DOCX: "Microsoft Word"}
+        labels = {FORMAT_TXT: "Testo", FORMAT_MD: "Markdown", FORMAT_TEX: "LaTeX", FORMAT_DOCX: "Microsoft Word"}
         target = filedialog.asksaveasfilename(
             parent=self, title=f"Esporta .{fmt}", defaultextension=f".{fmt}",
             initialdir=self._export_initial_dir(doc), initialfile=f"{doc.path.stem}.{fmt}",
@@ -3442,6 +3507,9 @@ class PdfView(ctk.CTkFrame):
         self._run_task(task, f"Esportato: {Path(target).name}", done)
 
     def export_all(self) -> None:
+        if FORMAT_DOCX in BATCH_FORMAT_CHOICES.get(self.batch_format_var.get(), [FORMAT_DOCX]) and not find_pandoc():
+            ensure_pandoc(self.app, self, self.export_all)
+            return
         self._commit_editor()
         ready = [doc for doc in self.docs if doc.source.strip()]
         if not ready:

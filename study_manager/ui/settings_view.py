@@ -33,7 +33,7 @@ from ..utils import safe_float, safe_int
 from .calendar_help import TAB_API, TAB_ICAL, open_calendar_help
 from .sync_card import SyncCard
 from .theme import font
-from .widgets import Card, PageHeader, clear_children, separator
+from .widgets import Card, PageHeader, clear_children, info_button, separator
 
 
 NO_SUBJECT_CHOICE = "— Nessuna (materia dal titolo) —"
@@ -45,51 +45,102 @@ class SettingsView(ctk.CTkFrame):
         self.app = app
         self.db = app.db
         self.paths = app.paths
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
+        PageHeader(
+            self,
+            "Impostazioni",
+            "Scegli una sezione dal menu. Il pulsante «i» spiega ogni impostazione.",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
+
+        menu = Card(self, width=220)
+        menu.grid(row=1, column=0, sticky="nsw", padx=(0, 16))
         self.scroll = ctk.CTkScrollableFrame(
             self,
             fg_color="transparent",
             scrollbar_button_color=COLORS.border,
             scrollbar_button_hover_color=COLORS.surface_hover,
         )
-        self.scroll.grid(row=0, column=0, sticky="nsew")
+        self.scroll.grid(row=1, column=1, sticky="nsew")
         self.scroll.grid_columnconfigure(0, weight=1)
 
-        PageHeader(
-            self.scroll,
-            "Impostazioni",
-            "Durata delle fasi, comportamento del timer e informazioni sui dati locali.",
-        ).grid(row=0, column=0, sticky="ew", pady=(0, 18))
-
-        content = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew")
-        content.grid_columnconfigure(0, weight=3, uniform="settings")
-        content.grid_columnconfigure(1, weight=2, uniform="settings")
-
-        self._build_timer_card(content)
-        self._build_behavior_card(content)
-        self._build_storage_card(content)
-        SyncCard(content, app).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(16, 0))
-        self._build_backup_card(content)
-        self._build_ical_card(content)
-        self._build_google_card(content)
+        sections = (
+            ("timer", "Ciclo Pomodoro", self._build_timer_card),
+            ("security", "Sicurezza", self._build_behavior_card),
+            ("storage", "Dati locali", self._build_storage_card),
+            ("sync", "Sincronizzazione tra PC", lambda frame: SyncCard(frame, app).grid(row=0, column=0, sticky="ew")),
+            ("backup", "Backup", self._build_backup_card),
+            ("ical", "Calendari iCal", self._build_ical_card),
+            ("google", "Google Calendar", self._build_google_card),
+        )
+        self._sections: dict[str, ctk.CTkFrame] = {}
+        self._menu_buttons: dict[str, ctk.CTkButton] = {}
+        for index, (key, label, build) in enumerate(sections):
+            frame = ctk.CTkFrame(self.scroll, fg_color="transparent")
+            frame.grid_columnconfigure(0, weight=1)
+            build(frame)
+            self._sections[key] = frame
+            button = ctk.CTkButton(
+                menu,
+                text=label,
+                width=196,
+                height=38,
+                anchor="w",
+                font=font(12, "bold"),
+                fg_color="transparent",
+                hover_color=COLORS.surface_alt,
+                text_color=COLORS.text_muted,
+                corner_radius=10,
+                command=lambda value=key: self._select_section(value),
+            )
+            button.grid(row=index, column=0, padx=12, pady=(12 if index == 0 else 2, 2))
+            self._menu_buttons[key] = button
+        self._section = ""
+        self._select_section("timer")
         self._connecting = False
         self._cancel_connect: threading.Event | None = None
         self._calendar_rows: dict[str, dict] = {}
 
     # ------------------------------------------------------------------ layout
+    def _select_section(self, key: str) -> None:
+        if key == self._section:
+            return
+        if self._section:
+            self._sections[self._section].grid_remove()
+        self._section = key
+        self._sections[key].grid(row=0, column=0, sticky="nsew")
+        try:
+            self.scroll._parent_canvas.yview_moveto(0)
+        except (AttributeError, tk.TclError):
+            pass
+        for name, button in self._menu_buttons.items():
+            active = name == key
+            button.configure(
+                fg_color=COLORS.surface_alt if active else "transparent",
+                text_color=COLORS.text if active else COLORS.text_muted,
+            )
+
+    @staticmethod
+    def _title(card, text: str, info: str, columnspan: int = 1) -> None:
+        """Titolo della scheda con il pulsante «i» dell'informativa accanto."""
+        frame = ctk.CTkFrame(card, fg_color="transparent")
+        frame.grid(row=0, column=0, columnspan=columnspan, sticky="w", padx=22, pady=(18, 4))
+        ctk.CTkLabel(frame, text=text, font=font(16, "bold"), text_color=COLORS.text).pack(side="left")
+        info_button(frame, text, info).pack(side="left", padx=(8, 0))
+
     def _build_timer_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Ciclo Pomodoro",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=22, pady=(20, 3))
+            "Ciclo Pomodoro",
+            "Il metodo Pomodoro alterna blocchi di studio concentrato a pause brevi; dopo "
+            "un certo numero di blocchi arriva una pausa lunga.\n\nPremi \"Salva impostazioni\" "
+            "per applicare le modifiche: valgono dalla fase successiva, quella in corso non cambia.",
+            columnspan=2,
+        )
         ctk.CTkLabel(
             card,
             text="I valori vengono applicati alle fasi successive e salvati nel database.",
@@ -102,12 +153,19 @@ class SettingsView(ctk.CTkFrame):
         self.long_var = ctk.StringVar(value="15")
         self.cycles_var = ctk.StringVar(value="4")
         fields = (
-            ("Lavoro (min)", self.work_var, 22),
-            ("Pausa breve (min)", self.short_var, 22),
-            ("Pausa lunga (min)", self.long_var, 22),
-            ("Cicli prima pausa lunga", self.cycles_var, 22),
+            ("Lavoro (min)", self.work_var,
+             "Durata di ogni blocco di studio, da 1 a 180 minuti (consigliato 25). Durante il "
+             "lavoro restano attivi i blocchi dei siti e il registro delle applicazioni."),
+            ("Pausa breve (min)", self.short_var,
+             "Pausa tra un blocco di lavoro e il successivo, da 1 a 60 minuti (consigliato 5)."),
+            ("Pausa lunga (min)", self.long_var,
+             "Pausa piu' lunga che arriva dopo un certo numero di blocchi di lavoro, da 1 a "
+             "120 minuti (consigliato 15)."),
+            ("Cicli prima pausa lunga", self.cycles_var,
+             "Quanti blocchi di lavoro completare prima della pausa lunga, da 1 a 12 "
+             "(consigliato 4). Le pause tra un blocco e l'altro sono brevi."),
         )
-        for index, (label, variable, _pad) in enumerate(fields):
+        for index, (label, variable, info) in enumerate(fields):
             row = 2 + index // 2
             column = index % 2
             frame = ctk.CTkFrame(card, fg_color="transparent")
@@ -119,13 +177,16 @@ class SettingsView(ctk.CTkFrame):
                 pady=(0, 14),
             )
             frame.grid_columnconfigure(0, weight=1)
+            heading = ctk.CTkFrame(frame, fg_color="transparent")
+            heading.pack(anchor="w", pady=(0, 5))
             ctk.CTkLabel(
-                frame,
+                heading,
                 text=label,
                 font=font(11, "bold"),
                 text_color=COLORS.text_muted,
                 anchor="w",
-            ).pack(anchor="w", pady=(0, 5))
+            ).pack(side="left")
+            info_button(heading, label, info).pack(side="left", padx=(6, 0))
             ctk.CTkEntry(
                 frame,
                 textvariable=variable,
@@ -146,6 +207,9 @@ class SettingsView(ctk.CTkFrame):
             "Avvia automaticamente la fase successiva",
             "Dopo lavoro o pausa il timer riparte da solo.",
             self.auto_start_var,
+            "Se attivo, alla fine di un blocco di lavoro parte subito la pausa e alla fine "
+            "della pausa riparte il lavoro. Se disattivo, il timer si ferma e aspetta che "
+            "premi Avvia.",
         )
         self._switch(
             card,
@@ -153,6 +217,8 @@ class SettingsView(ctk.CTkFrame):
             "Segnale sonoro a fine fase",
             "Un breve beep di sistema alla conclusione.",
             self.sound_var,
+            "Riproduce un suono quando una fase (lavoro o pausa) finisce, utile se Lectio "
+            "e' nascosto dietro altre finestre.",
         )
 
         buttons = ctk.CTkFrame(card, fg_color="transparent")
@@ -191,17 +257,21 @@ class SettingsView(ctk.CTkFrame):
         title: str,
         subtitle: str,
         variable: ctk.BooleanVar,
+        info: str,
     ) -> None:
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=22, pady=5)
         frame.grid_columnconfigure(0, weight=1)
+        heading = ctk.CTkFrame(frame, fg_color="transparent")
+        heading.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(
-            frame,
+            heading,
             text=title,
             font=font(11, "bold"),
             text_color=COLORS.text,
             anchor="w",
-        ).grid(row=0, column=0, sticky="w")
+        ).pack(side="left")
+        info_button(heading, title, info).pack(side="left", padx=(6, 0))
         ctk.CTkLabel(
             frame,
             text=subtitle,
@@ -222,14 +292,16 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_behavior_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Sicurezza e autorizzazioni",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, sticky="w", padx=20, pady=(20, 6))
+            "Sicurezza e autorizzazioni",
+            "Questa sezione e' solo informativa: non ci sono valori da cambiare.\n\nPer bloccare "
+            "i siti Lectio modifica il file hosts di Windows, che richiede i permessi di "
+            "amministratore: per questo compare il prompt UAC solo quando avvii un blocco. "
+            "Un processo guardiano ripristina il file hosts anche se Lectio si chiude male.",
+        )
         ctk.CTkLabel(
             card,
             text=(
@@ -239,7 +311,7 @@ class SettingsView(ctk.CTkFrame):
             ),
             font=font(11),
             text_color=COLORS.text_muted,
-            wraplength=330,
+            wraplength=700,
             justify="left",
             anchor="w",
         ).grid(row=1, column=0, sticky="ew", padx=20)
@@ -259,7 +331,7 @@ class SettingsView(ctk.CTkFrame):
             ),
             font=font(10),
             text_color=COLORS.text_faint,
-            wraplength=330,
+            wraplength=700,
             justify="left",
             anchor="w",
         ).grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 16))
@@ -279,21 +351,23 @@ class SettingsView(ctk.CTkFrame):
             ),
             font=font(10),
             text_color=COLORS.text_muted,
-            wraplength=330,
+            wraplength=700,
             justify="left",
             anchor="w",
         ).grid(row=6, column=0, sticky="ew", padx=20, pady=(0, 20))
 
     def _build_storage_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Dati locali",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=22, pady=(18, 4))
+            "Dati locali",
+            "Mostra dove Lectio salva il database e quanto occupa. \"Apri cartella dati\" apre "
+            "la cartella in Esplora file.\n\n\"Controlla aggiornamenti\" cerca subito una nuova "
+            "versione di Lectio invece di aspettare il controllo automatico.",
+            columnspan=2,
+        )
         ctk.CTkLabel(
             card,
             text="Database SQLite, backup hosts e log restano nella cartella utente.",
@@ -355,14 +429,16 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_backup_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Backup e trasferimento dati",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 4))
+            "Backup e trasferimento dati",
+            "\"Esporta dati\" crea un file ZIP con tutti i tuoi dati: tienilo come copia di "
+            "sicurezza o usalo per spostare Lectio su un altro PC.\n\n\"Importa dati\" sostituisce "
+            "TUTTI i dati attuali con quelli del backup; prima Lectio salva in automatico una "
+            "copia dei dati attuali. Gli accessi a Google e gli indirizzi iCal non sono inclusi.",
+        )
         ctk.CTkLabel(
             card,
             text=(
@@ -419,14 +495,16 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_google_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Google Calendar tramite API (avanzato, bidirezionale)",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 4))
+            "Google Calendar tramite API (avanzato, bidirezionale)",
+            "Collega il tuo account Google: gli eventi creati o modificati in Lectio arrivano "
+            "anche su Google Calendar e viceversa.\n\nServe un file credentials.json creato da te "
+            "in Google Cloud Console (vedi \"Come Connettere Calendario\"). Scegli quali calendari "
+            "sincronizzare e a quale materia abbinarli, poi premi \"Salva e sincronizza\".",
+        )
         self._help_button(card, TAB_API).grid(row=0, column=0, sticky="e", padx=22, pady=(16, 4))
         ctk.CTkLabel(
             card,
@@ -501,13 +579,17 @@ class SettingsView(ctk.CTkFrame):
         options.grid(row=8, column=0, sticky="ew", padx=22, pady=(14, 4))
         self.past_days_var = ctk.StringVar(value="180")
         self.future_days_var = ctk.StringVar(value="365")
-        for label, variable in (
-            ("Giorni passati", self.past_days_var),
-            ("Giorni futuri", self.future_days_var),
+        for label, variable, info in (
+            ("Giorni passati", self.past_days_var,
+             "Quanti giorni indietro, da oggi, leggere gli eventi da Google Calendar (da 1 a 3650). "
+             "Gli eventi piu' vecchi non vengono scaricati."),
+            ("Giorni futuri", self.future_days_var,
+             "Quanti giorni in avanti, da oggi, leggere gli eventi da Google Calendar (da 1 a 3650)."),
         ):
             ctk.CTkLabel(
                 options, text=label, font=font(11, "bold"), text_color=COLORS.text_muted
             ).pack(side="left", padx=(0, 6))
+            info_button(options, label, info).pack(side="left", padx=(0, 6))
             ctk.CTkEntry(
                 options,
                 textvariable=variable,
@@ -531,6 +613,12 @@ class SettingsView(ctk.CTkFrame):
             button_hover_color=COLORS.text,
             fg_color=COLORS.border,
         ).pack(side="left")
+        info_button(
+            options,
+            "Calendario per ogni nuova materia",
+            "Se attivo, quando aggiungi una materia Lectio crea su Google un calendario con lo "
+            "stesso nome e lo abbina alla materia. Richiede l'account collegato.",
+        ).pack(side="left", padx=(6, 0))
 
         footer = ctk.CTkFrame(card, fg_color="transparent")
         footer.grid(row=9, column=0, sticky="ew", padx=22, pady=(10, 18))
@@ -553,14 +641,17 @@ class SettingsView(ctk.CTkFrame):
 
     def _build_ical_card(self, parent) -> None:
         card = Card(parent)
-        card.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 0))
+        card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self._title(
             card,
-            text="Calendari tramite indirizzo iCal (senza API)",
-            font=font(16, "bold"),
-            text_color=COLORS.text,
-        ).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 4))
+            "Calendari tramite indirizzo iCal (senza API)",
+            "Il modo piu' semplice per vedere in Lectio i tuoi calendari Google, senza login. "
+            "Incolla l'indirizzo segreto iCal di un calendario, scegli eventualmente la materia "
+            "e premi \"Aggiungi\".\n\nE' in sola lettura: gli eventi creati in Lectio non vanno su "
+            "Google. Il pallino colorato cambia il colore del calendario. Non condividere "
+            "l'indirizzo segreto: chi lo ha puo' leggere il calendario.",
+        )
         self._help_button(card, TAB_ICAL).grid(row=0, column=0, sticky="e", padx=22, pady=(16, 4))
         ctk.CTkLabel(
             card,

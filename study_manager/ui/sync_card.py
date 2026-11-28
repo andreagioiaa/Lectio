@@ -16,7 +16,7 @@ from ..services import sync_folder as sync
 from .share_view import format_size
 from .summary_view import ProgressDialog, run_in_background
 from .theme import font
-from .widgets import Card
+from .widgets import Card, info_button
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,8 +52,18 @@ class SyncCard(Card):
         self.app = app
         self.paths = app.paths
         self.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(self, text="Sincronizzazione tra PC", font=font(16, "bold"), text_color=COLORS.text).grid(
-            row=0, column=0, sticky="w", padx=22, pady=(18, 4))
+        title = ctk.CTkFrame(self, fg_color="transparent")
+        title.grid(row=0, column=0, sticky="w", padx=22, pady=(18, 4))
+        ctk.CTkLabel(title, text="Sincronizzazione tra PC", font=font(16, "bold"), text_color=COLORS.text).pack(
+            side="left")
+        info_button(
+            title, "Sincronizzazione tra PC",
+            "Sposta database, materie, trascrizioni e immagini degli appunti in una cartella "
+            "sincronizzata dal cloud (OneDrive, Google Drive, Dropbox), cosi' piu' PC usano gli "
+            "stessi dati.\n\nApri Lectio su un solo PC alla volta: due istanze aperte insieme "
+            "possono sovrascriversi a vicenda. \"Torna ai dati su questo PC\" copia i dati in "
+            "locale senza cancellare la cartella sincronizzata. Dopo ogni cambio Lectio si chiude.",
+        ).pack(side="left", padx=(8, 0))
         ctk.CTkLabel(
             self,
             text=("Per usare Lectio su piu' PC, metti i dati in una cartella di OneDrive, Google Drive o Dropbox. "

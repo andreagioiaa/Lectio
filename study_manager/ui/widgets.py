@@ -39,6 +39,26 @@ class Card(ctk.CTkFrame):
         super().__init__(master, **kwargs)
 
 
+def info_button(master, title: str, text: str) -> ctk.CTkButton:
+    """Pulsante «i» tondo che apre un'informativa sull'impostazione accanto."""
+    from tkinter import messagebox
+
+    return ctk.CTkButton(
+        master,
+        text="i",
+        width=22,
+        height=22,
+        corner_radius=11,
+        font=font(11, "bold"),
+        fg_color="transparent",
+        hover_color=COLORS.surface_alt,
+        border_width=1,
+        border_color=COLORS.border,
+        text_color=COLORS.blue,
+        command=lambda: messagebox.showinfo(title, text, parent=master.winfo_toplevel()),
+    )
+
+
 class PageHeader(ctk.CTkFrame):
     def __init__(self, master, title: str, subtitle: str, **kwargs):
         kwargs.setdefault("fg_color", "transparent")
